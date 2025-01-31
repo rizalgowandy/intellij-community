@@ -1,6 +1,7 @@
 // IS_APPLICABLE: true
-// IGNORE_K1
 // COMPILER_ARGUMENTS: -Xmulti-dollar-interpolation
+// K2_ERROR: Unresolved reference 'foo'.
+// K2_AFTER_ERROR: Unresolved reference 'foo'.
 
 fun test() {
     "${'$'}${'$'}${'$'}${'$'}${'$'}${'$'}$foo<caret>"

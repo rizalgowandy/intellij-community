@@ -26,11 +26,13 @@ import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.terminal.TerminalUiSettingsManager;
 import com.intellij.ui.*;
 import com.intellij.ui.components.*;
+import com.intellij.ui.dsl.listCellRenderer.BuilderKt;
 import com.intellij.uiDesigner.core.GridConstraints;
 import com.intellij.uiDesigner.core.GridLayoutManager;
 import com.intellij.util.EnvironmentUtil;
 import com.intellij.util.ObjectUtils;
 import com.intellij.util.concurrency.EdtExecutorService;
+import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.ui.JBUI;
 import com.intellij.util.ui.SwingHelper;
 import com.intellij.util.ui.UIUtil;
@@ -84,11 +86,15 @@ public final class TerminalSettingsPanel {
   private JBLabel myBetaLabel;
   private JPanel myNewUiChildSettingsPanel;
 
+  private JBCheckBox myShowSeparatorsBetweenBlocksCheckbox;
+
+  private JPanel myPromptStylePanel;
   private JPanel myPromptStyleButtonsPanel;
   private JBRadioButton mySingleLineButton;
   private JBRadioButton myDoubleLineButton;
   private JBRadioButton myShellPromptButton;
   private JPanel myShellPromptButtonPanel;
+  private JPanel myNewUiConfigurablesPanel;
 
   private Project myProject;
   private TerminalOptionsProvider myOptionsProvider;
@@ -96,6 +102,7 @@ public final class TerminalSettingsPanel {
   private BlockTerminalOptions myBlockTerminalOptions;
 
   private final List<UnnamedConfigurable> myConfigurables = new ArrayList<>();
+  private final List<UnnamedConfigurable> myNewUiConfigurables = new ArrayList<>();
 
   public JComponent createPanel(
     @NotNull Project project,
@@ -112,10 +119,11 @@ public final class TerminalSettingsPanel {
     myBetaLabel.setIcon(AllIcons.General.Beta);
     myNewUiChildSettingsPanel.setBorder(JBUI.Borders.emptyLeft(28));
     myNewUiCheckbox.setSelected(Registry.is(LocalBlockTerminalRunner.BLOCK_TERMINAL_REGISTRY));
-    // Show child New Terminal settings as disabled if New Terminal is not selected
-    updateNewUiPanelState();
     myNewUiCheckbox.addChangeListener(__ -> updateNewUiPanelState());
 
+    myShowSeparatorsBetweenBlocksCheckbox.setVisible(Registry.is(LocalBlockTerminalRunner.REWORKED_BLOCK_TERMINAL_REGISTRY));
+
+    myPromptStylePanel.setVisible(!Registry.is(LocalBlockTerminalRunner.REWORKED_BLOCK_TERMINAL_REGISTRY));
     myPromptStyleButtonsPanel.setBorder(JBUI.Borders.empty(4, 20, 0, 0));
     // UI Designer is unable to create a ContextHelpLabel, because it doesn't have a default constructor.
     // So, I have to create and add it manually.
@@ -134,30 +142,23 @@ public final class TerminalSettingsPanel {
     configureShellPathField();
     configureStartDirectoryField();
 
-    List<Component> customComponents = new ArrayList<>();
-    for (LocalTerminalCustomizer c : LocalTerminalCustomizer.EP_NAME.getExtensions()) {
+    for (LocalTerminalCustomizer c : LocalTerminalCustomizer.EP_NAME.getExtensionList()) {
       UnnamedConfigurable configurable = c.getConfigurable(projectOptionsProvider.getProject());
       if (configurable != null) {
         myConfigurables.add(configurable);
-        JComponent component = configurable.createComponent();
-        if (component != null) {
-          customComponents.add(component);
-        }
+      }
+
+      UnnamedConfigurable newUiConfigurable = c.getBlockTerminalConfigurable(projectOptionsProvider.getProject());
+      if (newUiConfigurable != null) {
+        myNewUiConfigurables.add(newUiConfigurable);
       }
     }
-    if (!customComponents.isEmpty()) {
-      myConfigurablesPanel.setLayout(new GridLayoutManager(customComponents.size(), 1));
-      int i = 0;
-      for (Component component : customComponents) {
-        myConfigurablesPanel.add(component, new GridConstraints(
-          i++, 0, 1, 1, GridConstraints.ANCHOR_WEST, GridConstraints.FILL_NONE, 0, 0,
-          new Dimension(-1, -1),
-          new Dimension(-1, -1),
-          new Dimension(-1, -1),
-          0, false
-        ));
-      }
-    }
+
+    addCustomConfigurablesToPanel(myConfigurablesPanel, myConfigurables);
+    addCustomConfigurablesToPanel(myNewUiConfigurablesPanel, myNewUiConfigurables);
+
+    // Show child New Terminal settings as disabled if New Terminal is not selected
+    updateNewUiPanelState();
 
     myUseOptionAsMetaKey.getParent().setVisible(SystemInfo.isMac);
 
@@ -198,6 +199,7 @@ public final class TerminalSettingsPanel {
 
   public boolean isModified() {
     return myNewUiCheckbox.isSelected() != Registry.is(LocalBlockTerminalRunner.BLOCK_TERMINAL_REGISTRY)
+           || (myBlockTerminalOptions.getShowSeparatorsBetweenBlocks() != myShowSeparatorsBetweenBlocksCheckbox.isSelected())
            || (myBlockTerminalOptions.getPromptStyle() != getSelectedPromptStyle())
            || !Objects.equals(myShellPathField.getText(), myProjectOptionsProvider.getShellPath())
            || !Objects.equals(myStartDirectoryField.getText(), StringUtil.notNullize(myProjectOptionsProvider.getStartingDirectory()))
@@ -211,7 +213,8 @@ public final class TerminalSettingsPanel {
            || (myShellIntegration.isSelected() != myOptionsProvider.getShellIntegration())
            || (myHighlightHyperlinks.isSelected() != myOptionsProvider.getHighlightHyperlinks())
            || (myUseOptionAsMetaKey.isSelected() != myOptionsProvider.getUseOptionAsMetaKey())
-           || myConfigurables.stream().anyMatch(c -> c.isModified())
+           || ContainerUtil.exists(myConfigurables, c -> c.isModified())
+           || ContainerUtil.exists(myNewUiConfigurables, c -> c.isModified())
            || !Comparing.equal(myEnvVarField.getData(), myProjectOptionsProvider.getEnvData())
            || myCursorShape.getItem() != myOptionsProvider.getCursorShape();
   }
@@ -229,6 +232,7 @@ public final class TerminalSettingsPanel {
         }, ModalityState.nonModal());
       }
     }
+    myBlockTerminalOptions.setShowSeparatorsBetweenBlocks(myShowSeparatorsBetweenBlocksCheckbox.isSelected());
     myBlockTerminalOptions.setPromptStyle(getSelectedPromptStyle());
     myProjectOptionsProvider.setStartingDirectory(myStartDirectoryField.getText());
     myProjectOptionsProvider.setShellPath(myShellPathField.getText());
@@ -242,20 +246,24 @@ public final class TerminalSettingsPanel {
     myOptionsProvider.setShellIntegration(myShellIntegration.isSelected());
     myOptionsProvider.setHighlightHyperlinks(myHighlightHyperlinks.isSelected());
     myOptionsProvider.setUseOptionAsMetaKey(myUseOptionAsMetaKey.isSelected());
-    myConfigurables.forEach(c -> {
-      try {
-        c.apply();
-      }
-      catch (ConfigurationException e) {
-        //pass
-      }
-    });
+    myConfigurables.forEach(c -> applyIgnoringConfigurationException(c));
+    myNewUiConfigurables.forEach(c -> applyIgnoringConfigurationException(c));
     myProjectOptionsProvider.setEnvData(myEnvVarField.getData());
     myOptionsProvider.setCursorShape(ObjectUtils.notNull(myCursorShape.getItem(), TerminalUiSettingsManager.CursorShape.BLOCK));
   }
 
+  private static void applyIgnoringConfigurationException(@NotNull UnnamedConfigurable configurable) {
+    try {
+      configurable.apply();
+    }
+    catch (ConfigurationException e) {
+      // pass
+    }
+  }
+
   public void reset() {
     myNewUiCheckbox.setSelected(Registry.is(LocalBlockTerminalRunner.BLOCK_TERMINAL_REGISTRY));
+    myShowSeparatorsBetweenBlocksCheckbox.setSelected(myBlockTerminalOptions.getShowSeparatorsBetweenBlocks());
     var promptStyle = myBlockTerminalOptions.getPromptStyle();
     mySingleLineButton.setSelected(promptStyle == TerminalPromptStyle.SINGLE_LINE);
     myDoubleLineButton.setSelected(promptStyle == TerminalPromptStyle.DOUBLE_LINE);
@@ -273,6 +281,7 @@ public final class TerminalSettingsPanel {
     myHighlightHyperlinks.setSelected(myOptionsProvider.getHighlightHyperlinks());
     myUseOptionAsMetaKey.setSelected(myOptionsProvider.getUseOptionAsMetaKey());
     myConfigurables.forEach(c -> c.reset());
+    myNewUiConfigurables.forEach(c -> c.reset());
     myEnvVarField.setData(myProjectOptionsProvider.getEnvData());
     myCursorShape.setItem(myOptionsProvider.getCursorShape());
     myEnvVarField.setEnabled(TrustedProjects.isTrusted(myProject));
@@ -310,10 +319,31 @@ public final class TerminalSettingsPanel {
     });
     UIUtil.applyStyle(UIUtil.ComponentStyle.SMALL, myConfigureTerminalKeybindingsActionLink);
     myCursorShape = new ComboBox<>(TerminalUiSettingsManager.CursorShape.values());
-    myCursorShape.setRenderer(SimpleListCellRenderer.create((label, value, index) -> {
-      label.setText(value.getText());
+    myCursorShape.setRenderer(BuilderKt.textListCellRenderer(value -> {
+      return value.getText();
     }));
     myShellPathField = createShellPath();
+  }
+
+  private static void addCustomConfigurablesToPanel(@NotNull JPanel panel, @NotNull List<UnnamedConfigurable> configurables) {
+    List<JComponent> components = ContainerUtil.map(configurables, it -> it.createComponent());
+
+    if (components.isEmpty()) {
+      return;
+    }
+
+    panel.setLayout(new GridLayoutManager(components.size(), 1));
+
+    for (int i = 0; i < components.size(); i++) {
+      var component = components.get(i);
+      panel.add(component, new GridConstraints(
+        i, 0, 1, 1, GridConstraints.ANCHOR_WEST, GridConstraints.FILL_NONE, 0, 0,
+        new Dimension(-1, -1),
+        new Dimension(-1, -1),
+        new Dimension(-1, -1),
+        0, false
+      ));
+    }
   }
 
   private @NotNull TextFieldWithHistoryWithBrowseButton createShellPath() {
@@ -387,8 +417,7 @@ public final class TerminalSettingsPanel {
     }
   }
 
-  @NotNull
-  private static Color findColorByKey(String... colorKeys) {
+  private static @NotNull Color findColorByKey(String... colorKeys) {
     Color c = null;
     for (String key : colorKeys) {
       c = UIManager.getColor(key);

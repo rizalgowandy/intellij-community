@@ -32,12 +32,9 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import static com.intellij.codeInsight.daemon.impl.analysis.PatternHighlightingModel.*;
 import static com.intellij.codeInsight.daemon.impl.analysis.PatternsInSwitchBlockHighlightingModel.CompletenessResult.*;
-import static com.intellij.psi.PsiModifier.ABSTRACT;
-import static com.intellij.psi.PsiModifier.SEALED;
 
 /**
  * This class represents the model for highlighting patterns in a switch block.
@@ -48,8 +45,7 @@ import static com.intellij.psi.PsiModifier.SEALED;
  */
 public class PatternsInSwitchBlockHighlightingModel extends SwitchBlockHighlightingModel {
   private final Object myUnconditionalPattern = new Object();
-  @Nullable
-  private final SelectorKind mySelectorKind;
+  private final @Nullable SelectorKind mySelectorKind;
 
   PatternsInSwitchBlockHighlightingModel(@NotNull LanguageLevel languageLevel,
                                          @NotNull PsiSwitchBlock switchBlock,
@@ -200,7 +196,7 @@ public class PatternsInSwitchBlockHighlightingModel extends SwitchBlockHighlight
         errorSink.accept(info);
         return true;
       }
-      if ((!ContainerUtil.and(getAllTypes(mySelectorType), type -> TypeConversionUtil.areTypesConvertible(type, patternType)) ||
+      if ((!ContainerUtil.and(JavaPsiPatternUtil.deconstructSelectorType(mySelectorType), type -> TypeConversionUtil.areTypesConvertible(type, patternType)) ||
            // 14.30.3 A type pattern that declares a pattern variable of a reference type U is
            // applicable at another reference type T if T is checkcast convertible to U (JEP 440-441)
            // There is no rule that says that a reference type applies to a primitive type
@@ -572,8 +568,7 @@ public class PatternsInSwitchBlockHighlightingModel extends SwitchBlockHighlight
     return null;
   }
 
-  @NotNull
-  private static CaseLabelCombinationProblem getPatternConstantCombinationProblem(PsiCaseLabelElement anchor) {
+  private static @NotNull CaseLabelCombinationProblem getPatternConstantCombinationProblem(PsiCaseLabelElement anchor) {
     if (PsiUtil.isAvailable(JavaFeature.UNNAMED_PATTERNS_AND_VARIABLES, anchor)) {
       return new CaseLabelCombinationProblem(anchor, "invalid.case.label.combination.constants.and.patterns.unnamed", null);
     }
@@ -677,7 +672,7 @@ public class PatternsInSwitchBlockHighlightingModel extends SwitchBlockHighlight
                                  boolean inclusiveUnconditionalAndDefault,
                                  @NotNull Consumer<? super HighlightInfo.Builder> errorSink) {
     //T is an intersection type T1& ... &Tn, and P covers Ti, for one of the type Ti (1≤i≤n)
-    List<PsiType> selectorTypes = getAllTypes(mySelectorType);
+    List<PsiType> selectorTypes = JavaPsiPatternUtil.deconstructSelectorType(mySelectorType);
 
     if (inclusiveUnconditionalAndDefault) {
       PsiCaseLabelElement elementCoversType =
@@ -780,12 +775,11 @@ public class PatternsInSwitchBlockHighlightingModel extends SwitchBlockHighlight
       JavaPsiPatternUtil.isUnconditionallyExactForType(element, unboxedType, primitiveType));
   }
 
-  @NotNull
-  private static List<PsiType> getAbstractSealedTypes(@NotNull List<PsiType> selectorTypes) {
+  private static @NotNull List<PsiType> getAbstractSealedTypes(@NotNull List<PsiType> selectorTypes) {
     return selectorTypes.stream()
       .filter(type -> {
         PsiClass psiClass = PsiUtil.resolveClassInClassTypeOnly(TypeConversionUtil.erasure(type));
-        return psiClass != null && (isAbstractSealed(psiClass));
+        return psiClass != null && (JavaPsiSealedUtil.isAbstractSealed(psiClass));
       })
       .toList();
   }
@@ -853,9 +847,8 @@ public class PatternsInSwitchBlockHighlightingModel extends SwitchBlockHighlight
     info.registerFix(action, null, null, null, null);
   }
 
-  @Nullable
-  private HighlightInfo.Builder checkSealedClassCompleteness(@NotNull PsiType selectorType,
-                                                             @NotNull List<? extends PsiCaseLabelElement> elements) {
+  private @Nullable HighlightInfo.Builder checkSealedClassCompleteness(@NotNull PsiType selectorType,
+                                                                       @NotNull List<? extends PsiCaseLabelElement> elements) {
     Set<PsiClass> missedClasses;
     List<PatternDescription> descriptions = preparePatternDescription(elements);
     List<PsiEnumConstant> enumConstants = StreamEx.of(elements).map(element -> getEnumConstant(element)).nonNull().toList();
@@ -867,7 +860,7 @@ public class PatternsInSwitchBlockHighlightingModel extends SwitchBlockHighlight
     //if T is intersection types, it is allowed to choose any of them to cover
     for (PsiClass missedClass : missedSealedClasses) {
       PsiClassType missedClassType = TypeUtils.getType(missedClass);
-      if (cover(mySelector, missedClassType, selectorType)) {
+      if (JavaPsiPatternUtil.covers(mySelector, missedClassType, selectorType)) {
         missedClasses.clear();
         missedClasses.add(missedClass);
         break;
@@ -890,9 +883,8 @@ public class PatternsInSwitchBlockHighlightingModel extends SwitchBlockHighlight
   }
 
 
-  @NotNull
-  private static List<String> collectLabelElementNames(@NotNull List<? extends PsiCaseLabelElement> elements,
-                                                       @NotNull Set<? extends PsiClass> missingClasses) {
+  private static @NotNull List<String> collectLabelElementNames(@NotNull List<? extends PsiCaseLabelElement> elements,
+                                                                @NotNull Set<? extends PsiClass> missingClasses) {
     List<String> result = new ArrayList<>(ContainerUtil.map(elements, PsiElement::getText));
     for (PsiClass aClass : missingClasses) {
       result.add(aClass.getQualifiedName());
@@ -900,31 +892,8 @@ public class PatternsInSwitchBlockHighlightingModel extends SwitchBlockHighlight
     return StreamEx.of(result).distinct().toList();
   }
 
-  @NotNull
-  static Collection<PsiClass> getPermittedClasses(@NotNull PsiClass psiClass) {
-    return CachedValuesManager.getCachedValue(psiClass, () -> {
-      PsiReferenceList permitsList = psiClass.getPermitsList();
-      Collection<PsiClass> results;
-      if (permitsList == null) {
-        results = SyntaxTraverser.psiTraverser(psiClass.getContainingFile())
-          .filter(PsiClass.class)
-          //local classes and anonymous classes must not extend sealed
-          .filter(cls -> !(cls instanceof PsiAnonymousClass || PsiUtil.isLocalClass(cls)))
-          .filter(cls -> cls.isInheritor(psiClass, false))
-          .toList();
-      }
-      else {
-        results = Stream.of(permitsList.getReferencedTypes())
-          .map(type -> type.resolve()).filter(Objects::nonNull)
-          .collect(Collectors.toCollection(LinkedHashSet::new));
-      }
-      return CachedValueProvider.Result.create(results, PsiModificationTracker.MODIFICATION_COUNT);
-    });
-  }
-
-  @Nullable
-  static PsiCaseLabelElement findUnconditionalPatternForType(@NotNull List<? extends PsiCaseLabelElement> labelElements,
-                                                             @NotNull PsiType type) {
+  static @Nullable PsiCaseLabelElement findUnconditionalPatternForType(@NotNull List<? extends PsiCaseLabelElement> labelElements,
+                                                                       @NotNull PsiType type) {
     return ContainerUtil.find(labelElements, element -> JavaPsiPatternUtil.isUnconditionalForType(element, type));
   }
 
@@ -936,8 +905,7 @@ public class PatternsInSwitchBlockHighlightingModel extends SwitchBlockHighlight
     return getEnumConstant(element) != null;
   }
 
-  @Nullable
-  private static Object evaluateConstant(@NotNull PsiCaseLabelElement constant) {
+  private static @Nullable Object evaluateConstant(@NotNull PsiCaseLabelElement constant) {
     return JavaPsiFacade.getInstance(constant.getProject()).getConstantEvaluationHelper().computeConstantExpression(constant, false);
   }
 
@@ -953,8 +921,7 @@ public class PatternsInSwitchBlockHighlightingModel extends SwitchBlockHighlight
    * <p>{@link CompletenessResult#COMPLETE_WITH_UNCONDITIONAL}, if switch is complete because an unconditional pattern exists
    * <p>{@link CompletenessResult#COMPLETE_WITHOUT_UNCONDITIONAL}, if switch is complete and doesn't contain an unconditional pattern
    */
-  @NotNull
-  public static CompletenessResult evaluateSwitchCompleteness(@NotNull PsiSwitchBlock switchBlock,
+  public static @NotNull CompletenessResult evaluateSwitchCompleteness(@NotNull PsiSwitchBlock switchBlock,
                                                               boolean considerNestedDeconstructionPatterns) {
     SwitchBlockHighlightingModel switchModel = createInstance(
       PsiUtil.getLanguageLevel(switchBlock), switchBlock, switchBlock.getContainingFile());
@@ -1010,27 +977,6 @@ public class PatternsInSwitchBlockHighlightingModel extends SwitchBlockHighlight
   }
 
 
-  private static Set<PsiClass> findSealedUpperClasses(Set<PsiClass> classes) {
-    HashSet<PsiClass> sealedUpperClasses = new HashSet<>();
-    Set<PsiClass> visited = new HashSet<>();
-    Queue<PsiClass> nonVisited = new ArrayDeque<>(classes);
-    while (!nonVisited.isEmpty()) {
-      PsiClass polled = nonVisited.poll();
-      if (!visited.add(polled)) {
-        continue;
-      }
-      PsiClassType[] types = polled.getSuperTypes();
-      for (PsiClassType type : types) {
-        PsiClass superClass = PsiUtil.resolveClassInClassTypeOnly(TypeConversionUtil.erasure(type));
-        if (isAbstractSealed(superClass)) {
-          nonVisited.add(superClass);
-          sealedUpperClasses.add(superClass);
-        }
-      }
-    }
-    return sealedUpperClasses;
-  }
-
   private static @NotNull MultiMap<PsiClass, PsiType> findPermittedClasses(@NotNull List<PatternTypeTestDescription> elements) {
     MultiMap<PsiClass, PsiType> patternClasses = new MultiMap<>();
     for (PatternDescription element : elements) {
@@ -1038,7 +984,7 @@ public class PatternsInSwitchBlockHighlightingModel extends SwitchBlockHighlight
       PsiClass patternClass = PsiUtil.resolveClassInClassTypeOnly(patternType);
       if (patternClass != null) {
         patternClasses.putValue(patternClass, element.type());
-        Set<PsiClass> classes = returnAllPermittedClasses(patternClass);
+        Set<PsiClass> classes = JavaPsiSealedUtil.getAllPermittedClasses(patternClass);
         for (PsiClass aClass : classes) {
           patternClasses.putValue(aClass, element.type());
         }
@@ -1053,42 +999,6 @@ public class PatternsInSwitchBlockHighlightingModel extends SwitchBlockHighlight
       return pattern;
     }
     return null;
-  }
-
-  static Set<PsiClass> returnAllPermittedClasses(@NotNull PsiClass psiClass) {
-    return CachedValuesManager.getCachedValue(psiClass, () -> {
-      Set<PsiClass> result = new HashSet<>();
-      Set<PsiClass> visitedClasses = new HashSet<>();
-      Queue<PsiClass> notVisitedClasses = new LinkedList<>();
-      notVisitedClasses.add(psiClass);
-      while (!notVisitedClasses.isEmpty()) {
-        PsiClass notVisitedClass = notVisitedClasses.poll();
-        if (!isAbstractSealed(notVisitedClass) || visitedClasses.contains(notVisitedClass)) continue;
-        visitedClasses.add(notVisitedClass);
-        Collection<PsiClass> permittedClasses = getPermittedClasses(psiClass);
-        result.addAll(permittedClasses);
-        notVisitedClasses.addAll(permittedClasses);
-      }
-      return CachedValueProvider.Result.create(result, PsiModificationTracker.MODIFICATION_COUNT);
-    });
-  }
-
-  static boolean cover(@NotNull PsiElement context, @NotNull PsiType whoType, @NotNull PsiType overWhom) {
-    List<PsiType> whoTypes = getAllTypes(whoType);
-    List<PsiType> overWhomTypes = getAllTypes(overWhom);
-    for (PsiType currentWhoType : whoTypes) {
-      if (!ContainerUtil.exists(overWhomTypes, currentOverWhomType -> {
-        boolean unconditionallyExactForType =
-          JavaPsiPatternUtil.isUnconditionallyExactForType(context, currentOverWhomType, currentWhoType);
-        if (unconditionallyExactForType) return true;
-        PsiPrimitiveType unboxedOverWhomType = PsiPrimitiveType.getUnboxedType(currentOverWhomType);
-        if (unboxedOverWhomType == null) return false;
-        return JavaPsiPatternUtil.isUnconditionallyExactForType(context, unboxedOverWhomType, currentWhoType);
-      })) {
-        return false;
-      }
-    }
-    return true;
   }
 
   record SealedResult(@NotNull Set<PsiClass> missedClasses, @NotNull Set<PsiClass> coveredClasses) {
@@ -1121,11 +1031,11 @@ public class PatternsInSwitchBlockHighlightingModel extends SwitchBlockHighlight
     reducedDescriptions.addAll(reduceEnumConstantsToTypeTest(enumConstants));
     MultiMap<PsiClass, PsiType> permittedPatternClasses = findPermittedClasses(reducedDescriptions);
     //according JEP 440-441, only direct abstract-sealed classes are allowed (14.11.1.1)
-    Set<PsiClass> sealedUpperClasses = findSealedUpperClasses(permittedPatternClasses.keySet());
+    Set<PsiClass> sealedUpperClasses = JavaPsiSealedUtil.findSealedUpperClasses(permittedPatternClasses.keySet());
 
     List<PatternTypeTestDescription> typeTestPatterns = ContainerUtil.filterIsInstance(elements, PatternTypeTestDescription.class);
 
-    Set<PsiClass> selectorClasses = ContainerUtil.map2SetNotNull(getAllTypes(selectorType),
+    Set<PsiClass> selectorClasses = ContainerUtil.map2SetNotNull(JavaPsiPatternUtil.deconstructSelectorType(selectorType),
                                                                  type -> PsiUtil.resolveClassInClassTypeOnly(
                                                                    TypeConversionUtil.erasure(type)));
     if (selectorClasses.isEmpty()) return new SealedResult(Collections.emptySet(), Collections.emptySet());
@@ -1147,7 +1057,7 @@ public class PatternsInSwitchBlockHighlightingModel extends SwitchBlockHighlight
       if (sealedUpperClasses.contains(psiClass) ||
           //used to generate missed classes when the switch is empty
           (selectorClasses.contains(psiClass) && elements.isEmpty())) {
-        for (PsiClass permittedClass : getPermittedClasses(psiClass)) {
+        for (PsiClass permittedClass : JavaPsiSealedUtil.getPermittedClasses(psiClass)) {
           Collection<PsiType> patternTypes = permittedPatternClasses.get(permittedClass);
           PsiSubstitutor substitutor = TypeConversionUtil.getSuperClassSubstitutor(selectorClass, permittedClass, PsiSubstitutor.EMPTY);
           PsiType permittedType = JavaPsiFacade.getElementFactory(psiClass.getProject()).createType(psiClass, substitutor);
@@ -1155,8 +1065,8 @@ public class PatternsInSwitchBlockHighlightingModel extends SwitchBlockHighlight
           if (patternTypes.isEmpty() && TypeConversionUtil.areTypesConvertible(selectorType, permittedType) ||
               //if permittedClass is covered by existed patternType, we don't have to go further
               !patternTypes.isEmpty() && !ContainerUtil.exists(patternTypes,
-                                                               patternType -> cover(context, patternType,
-                                                                                    TypeUtils.getType(permittedClass)))) {
+                                                               patternType -> JavaPsiPatternUtil.covers(context, patternType,
+                                                                                                        TypeUtils.getType(permittedClass)))) {
             List<PsiClass> dependentClasses = new ArrayList<>(peeked.dependencies);
             dependentClasses.add(permittedClass);
             nonVisited.add(new ClassWithDependencies(permittedClass, dependentClasses));
@@ -1173,9 +1083,9 @@ public class PatternsInSwitchBlockHighlightingModel extends SwitchBlockHighlight
         //there is a chance, that tree goes away from a target type
         if (TypeConversionUtil.areTypesConvertible(targetType, selectorType) ||
             //we should consider items from the intersections in the usual way
-            cover(context, targetType, selectorType)) {
+            JavaPsiPatternUtil.covers(context, targetType, selectorType)) {
           if (//check a case, when we have something, which not in sealed hierarchy, but covers some leaves
-            !ContainerUtil.exists(typeTestPatterns, pattern -> cover(context, pattern.type(), targetType))) {
+            !ContainerUtil.exists(typeTestPatterns, pattern -> JavaPsiPatternUtil.covers(context, pattern.type(), targetType))) {
             missingClasses.add(psiClass);
             visitedNotCovered.addAll(peeked.dependencies);
           }
@@ -1195,14 +1105,6 @@ public class PatternsInSwitchBlockHighlightingModel extends SwitchBlockHighlight
       }
     }
     return new SealedResult(missingClasses, coveredClasses);
-  }
-
-  static boolean isAbstractSealed(@Nullable PsiClass psiClass) {
-    return psiClass != null && isSealed(psiClass) && psiClass.hasModifierProperty(ABSTRACT);
-  }
-
-  private static boolean isSealed(@Nullable PsiClass psiClass) {
-    return psiClass != null && (psiClass.hasModifierProperty(SEALED) || psiClass.getPermitsList() != null);
   }
 
   public enum CompletenessResult {

@@ -4,6 +4,7 @@ package org.jetbrains.idea.devkit.kotlin.inspections
 import com.intellij.codeInspection.IntentionWrapper
 import com.intellij.codeInspection.ProblemHighlightType
 import com.intellij.codeInspection.ProblemsHolder
+import com.intellij.lang.refactoring.InlineActionHandler
 import com.intellij.openapi.application.CachedSingletonsRegistry
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiElement
@@ -15,13 +16,13 @@ import org.jetbrains.idea.devkit.inspections.LevelType
 import org.jetbrains.idea.devkit.inspections.getLevelType
 import org.jetbrains.idea.devkit.inspections.quickfix.WrapInSupplierQuickFix
 import org.jetbrains.idea.devkit.kotlin.DevKitKotlinBundle
+import org.jetbrains.kotlin.analysis.api.analyze
 import org.jetbrains.kotlin.analysis.api.permissions.KaAllowAnalysisFromWriteAction
 import org.jetbrains.kotlin.analysis.api.permissions.KaAllowAnalysisOnEdt
-import org.jetbrains.kotlin.analysis.api.analyze
-import org.jetbrains.kotlin.analysis.api.resolution.singleFunctionCallOrNull
-import org.jetbrains.kotlin.analysis.api.resolution.symbol
 import org.jetbrains.kotlin.analysis.api.permissions.allowAnalysisFromWriteAction
 import org.jetbrains.kotlin.analysis.api.permissions.allowAnalysisOnEdt
+import org.jetbrains.kotlin.analysis.api.resolution.singleFunctionCallOrNull
+import org.jetbrains.kotlin.analysis.api.resolution.symbol
 import org.jetbrains.kotlin.analysis.api.symbols.KaConstructorSymbol
 import org.jetbrains.kotlin.analysis.api.symbols.KaPropertySymbol
 import org.jetbrains.kotlin.analysis.api.symbols.KaSamConstructorSymbol
@@ -32,7 +33,7 @@ import org.jetbrains.kotlin.idea.base.codeInsight.KotlinNameSuggestionProvider
 import org.jetbrains.kotlin.idea.base.codeInsight.KotlinNameValidatorProvider
 import org.jetbrains.kotlin.idea.base.codeInsight.ShortenReferencesFacility
 import org.jetbrains.kotlin.idea.intentions.ConvertPropertyToFunctionIntention
-import org.jetbrains.kotlin.idea.refactoring.inline.KotlinInlinePropertyProcessor
+import org.jetbrains.kotlin.idea.refactoring.inline.AbstractKotlinInlinePropertyHandler
 import org.jetbrains.kotlin.psi.*
 import org.jetbrains.kotlin.psi.psiUtil.containingClass
 import org.jetbrains.kotlin.psi.psiUtil.containingClassOrObject
@@ -182,7 +183,9 @@ private class KtWrapInSupplierQuickFix(ktProperty: KtProperty) : WrapInSupplierQ
    * All the necessary requirements (e.g. that the property has a body) are checked before.
    */
   override fun inlineElement(project: Project, element: KtProperty) {
-    KotlinInlinePropertyProcessor(
+    val handler = InlineActionHandler.EP_NAME.extensionList.find { it.isEnabledOnElement(element) } as? AbstractKotlinInlinePropertyHandler
+    LOG.assertTrue(handler != null, "KotlinInlinePropertyHandler is not available")
+    handler?.createProcessor(
       declaration = element,
       reference = null,
       inlineThisOnly = false,
@@ -191,6 +194,6 @@ private class KtWrapInSupplierQuickFix(ktProperty: KtProperty) : WrapInSupplierQ
       editor = PsiEditorUtil.findEditor(element),
       statementToDelete = null,
       project = project,
-    ).run()
+    )?.run()
   }
 }

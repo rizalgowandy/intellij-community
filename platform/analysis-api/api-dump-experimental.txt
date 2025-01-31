@@ -7,6 +7,9 @@
 - highlightSeverity():com.intellij.lang.annotation.HighlightSeverity
 f:com.intellij.codeInsight.intention.preview.IntentionPreviewUtils
 - *s:getModCommandPreview(com.intellij.modcommand.ModCommand,com.intellij.modcommand.ActionContext):com.intellij.codeInsight.intention.preview.IntentionPreviewInfo
+com.intellij.codeInsight.lookup.LookupEx
+- com.intellij.codeInsight.lookup.Lookup
+- *a:setPresentation(com.intellij.codeInsight.lookup.LookupPresentation):V
 *e:com.intellij.codeInsight.lookup.LookupPositionStrategy
 - java.lang.Enum
 - sf:ONLY_ABOVE:com.intellij.codeInsight.lookup.LookupPositionStrategy
@@ -60,6 +63,8 @@ f:com.intellij.inlinePrompt.InlinePrompt
 - *sf:isInlinePromptShown(com.intellij.openapi.editor.Editor,java.lang.Integer):Z
 - *sf:isInlinePromptShown(com.intellij.openapi.editor.Editor,java.lang.Integer,com.intellij.openapi.project.Project):Z
 - *bs:isInlinePromptShown$default(com.intellij.openapi.editor.Editor,java.lang.Integer,com.intellij.openapi.project.Project,I,java.lang.Object):Z
+com.intellij.lang.annotation.AnnotationBuilder
+- *a:withLazyQuickFix(java.util.function.Consumer):com.intellij.lang.annotation.AnnotationBuilder
 *f:com.intellij.lang.documentation.DocumentationSettings
 - s:autoShowQuickDocInModalDialogs():Z
 - s:getHighlightingSaturation(Z):F

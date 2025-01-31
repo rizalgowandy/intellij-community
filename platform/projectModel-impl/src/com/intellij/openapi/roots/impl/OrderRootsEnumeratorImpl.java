@@ -67,14 +67,16 @@ class OrderRootsEnumeratorImpl implements OrderRootsEnumerator {
     LOG.assertTrue(!myWithoutSelfModuleOutput, "Caching not supported for OrderRootsEnumerator with 'withoutSelfModuleOutput' option");
   }
 
-  @NotNull
-  private Collection<VirtualFile> computeRoots() {
+  private @NotNull Collection<VirtualFile> computeRoots() {
     final Collection<VirtualFile> result = new LinkedHashSet<>();
     myOrderEnumerator.forEach((orderEntry, customHandlers) -> {
       OrderRootType type = getRootType(orderEntry);
 
       if (orderEntry instanceof ModuleSourceOrderEntry) {
-        collectModuleRoots(type, ((ModuleSourceOrderEntry)orderEntry).getRootModel(), result, true, !myOrderEnumerator.isProductionOnly(),
+        ModuleRootModel rootModel = ((ModuleSourceOrderEntry)orderEntry).getRootModel();
+        boolean includeTests = !myOrderEnumerator.isProductionOnly() &&
+                               (OrderEnumeratorBase.shouldIncludeTestsFromDependentModulesToTestClasspath(customHandlers) || myOrderEnumerator.isRootModuleModel(rootModel));
+        collectModuleRoots(type, rootModel, result, true, includeTests,
                            customHandlers);
       }
       else if (orderEntry instanceof ModuleOrderEntry moduleOrderEntry) {
@@ -106,15 +108,16 @@ class OrderRootsEnumeratorImpl implements OrderRootsEnumerator {
     return result;
   }
 
-  @NotNull
-  private Collection<String> computeRootsUrls() {
+  private @NotNull Collection<String> computeRootsUrls() {
     final Collection<String> result = new LinkedHashSet<>();
     myOrderEnumerator.forEach((orderEntry, customHandlers) -> {
       OrderRootType type = getRootType(orderEntry);
 
       if (orderEntry instanceof ModuleSourceOrderEntry) {
-        boolean includeTests = !myOrderEnumerator.isProductionOnly();
-        collectModuleRootsUrls(type, ((ModuleSourceOrderEntry)orderEntry).getRootModel(), result, true, includeTests, customHandlers);
+        ModuleRootModel rootModel = ((ModuleSourceOrderEntry)orderEntry).getRootModel();
+        boolean includeTests = !myOrderEnumerator.isProductionOnly() 
+                               && (OrderEnumeratorBase.shouldIncludeTestsFromDependentModulesToTestClasspath(customHandlers) || myOrderEnumerator.isRootModuleModel(rootModel));
+        collectModuleRootsUrls(type, rootModel, result, true, includeTests, customHandlers);
       }
       else if (orderEntry instanceof ModuleOrderEntry moduleOrderEntry) {
         final Module module = moduleOrderEntry.getModule();
@@ -140,9 +143,8 @@ class OrderRootsEnumeratorImpl implements OrderRootsEnumerator {
     return result;
   }
 
-  @NotNull
   @Override
-  public PathsList getPathsList() {
+  public @NotNull PathsList getPathsList() {
     final PathsList list = new PathsList();
     collectPaths(list);
     return list;
@@ -153,16 +155,14 @@ class OrderRootsEnumeratorImpl implements OrderRootsEnumerator {
     list.addVirtualFiles(getRoots());
   }
 
-  @NotNull
   @Override
-  public OrderRootsEnumerator usingCache() {
+  public @NotNull OrderRootsEnumerator usingCache() {
     myUsingCache = true;
     return this;
   }
 
-  @NotNull
   @Override
-  public OrderRootsEnumerator withoutSelfModuleOutput() {
+  public @NotNull OrderRootsEnumerator withoutSelfModuleOutput() {
     myWithoutSelfModuleOutput = true;
     return this;
   }
@@ -260,8 +260,7 @@ class OrderRootsEnumeratorImpl implements OrderRootsEnumerator {
     OrderEnumeratorBase.addCustomRootsUrlsForModule(type, rootModel, result, includeProduction, includeTests, customHandlers);
   }
 
-  @NotNull
-  private OrderRootType getRootType(@NotNull OrderEntry e) {
+  private @NotNull OrderRootType getRootType(@NotNull OrderEntry e) {
     return myRootType != null ? myRootType : myRootTypeProvider.fun(e);
   }
 

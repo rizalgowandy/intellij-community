@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 
 package org.jetbrains.kotlin.idea.k2.refactoring.introduce;
 
@@ -852,6 +852,11 @@ public abstract class K2IntroduceFunctionTestGenerated extends AbstractK2Introdu
             @TestMetadata("singleOutputValue.kt")
             public void testSingleOutputValue() throws Exception {
                 runTest("../../idea/tests/testData/refactoring/extractFunction/controlFlow/outputValues/singleOutputValue.kt");
+            }
+
+            @TestMetadata("singleOutputValueBracesRequired.kt")
+            public void testSingleOutputValueBracesRequired() throws Exception {
+                runTest("../../idea/tests/testData/refactoring/extractFunction/controlFlow/outputValues/singleOutputValueBracesRequired.kt");
             }
 
             @TestMetadata("singleOutputValueWithIf.kt")
@@ -1749,6 +1754,11 @@ public abstract class K2IntroduceFunctionTestGenerated extends AbstractK2Introdu
             @TestMetadata("implicitThisWithSmartCast.kt")
             public void testImplicitThisWithSmartCast() throws Exception {
                 runTest("../../idea/tests/testData/refactoring/extractFunction/parameters/extractThis/implicitThisWithSmartCast.kt");
+            }
+
+            @TestMetadata("importedCall.kt")
+            public void testImportedCall() throws Exception {
+                runTest("../../idea/tests/testData/refactoring/extractFunction/parameters/extractThis/importedCall.kt");
             }
 
             @TestMetadata("javaSyntheticProperty.kt")

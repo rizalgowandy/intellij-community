@@ -41,12 +41,17 @@ public final class HashMapZipFile implements ZipFile {
     return (HashMapZipFile)ImmutableZipFile.load(file, true);
   }
 
-  @NotNull
-  static HashMapZipFile createHashMapZipFile(@NotNull ByteBuffer buffer,
-                                             int fileSize,
-                                             int entryCount,
-                                             int centralDirSize,
-                                             int centralDirPosition) throws EOFException {
+  public static @Nullable HashMapZipFile loadIfNotEmpty(@NotNull Path file) throws IOException {
+    @SuppressWarnings("resource")
+    ZipFile result = ImmutableZipFile.load(file, true);
+    return result instanceof EmptyZipFile ? null : (HashMapZipFile)result;
+  }
+
+  static @NotNull HashMapZipFile createHashMapZipFile(@NotNull ByteBuffer buffer,
+                                                      int fileSize,
+                                                      int entryCount,
+                                                      int centralDirSize,
+                                                      int centralDirPosition) throws EOFException {
     // ensure the table is even length
     if (entryCount == 65535) {
       // it means that more than 65k entries - estimate the number of entries

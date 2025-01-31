@@ -137,6 +137,8 @@ com.intellij.ide.structureView.StructureView
 com.intellij.ide.structureView.StructureViewBuilder
 - sf:PROVIDER:com.intellij.ide.structureView.StructureViewBuilderProvider
 - a:createStructureView(com.intellij.openapi.fileEditor.FileEditor,com.intellij.openapi.project.Project):com.intellij.ide.structureView.StructureView
+- createStructureViewSuspend(com.intellij.openapi.fileEditor.FileEditor,com.intellij.openapi.project.Project,kotlin.coroutines.Continuation):java.lang.Object
+- bs:createStructureViewSuspend$suspendImpl(com.intellij.ide.structureView.StructureViewBuilder,com.intellij.openapi.fileEditor.FileEditor,com.intellij.openapi.project.Project,kotlin.coroutines.Continuation):java.lang.Object
 - s:getProvider():com.intellij.ide.structureView.StructureViewBuilderProvider
 com.intellij.ide.structureView.StructureViewBuilderProvider
 - a:getStructureViewBuilder(com.intellij.openapi.fileTypes.FileType,com.intellij.openapi.vfs.VirtualFile,com.intellij.openapi.project.Project):com.intellij.ide.structureView.StructureViewBuilder
@@ -220,9 +222,10 @@ e:com.intellij.ide.ui.AntialiasingType
 - s:canUseSubpixelAAForEditor():Z
 - s:canUseSubpixelAAForIDE():Z
 - s:getAAHintForSwingComponent():java.lang.Object
+- s:getAATextInfoForSwingComponent():com.intellij.util.ui.AATextInfo
 - s:getKeyForCurrentScope(Z):java.lang.Object
 - getPresentableName():java.lang.String
-- getTextInfo():java.lang.Object
+- getTextInfo():com.intellij.util.ui.AATextInfo
 - s:updateContext(java.awt.font.FontRenderContext,Z):java.awt.font.FontRenderContext
 - s:valueOf(java.lang.String):com.intellij.ide.ui.AntialiasingType
 - s:values():com.intellij.ide.ui.AntialiasingType[]
@@ -239,6 +242,18 @@ c:com.intellij.ide.ui.ColorBlindnessSupport
 - <init>():V
 - s:get(com.intellij.ide.ui.ColorBlindness):com.intellij.ide.ui.ColorBlindnessSupport
 - getFilter():java.awt.image.ImageFilter
+e:com.intellij.ide.ui.MainMenuDisplayMode
+- java.lang.Enum
+- sf:Companion:com.intellij.ide.ui.MainMenuDisplayMode$Companion
+- sf:MERGED_WITH_MAIN_TOOLBAR:com.intellij.ide.ui.MainMenuDisplayMode
+- sf:SEPARATE_TOOLBAR:com.intellij.ide.ui.MainMenuDisplayMode
+- sf:UNDER_HAMBURGER_BUTTON:com.intellij.ide.ui.MainMenuDisplayMode
+- f:getDescription():java.lang.String
+- s:getEntries():kotlin.enums.EnumEntries
+- s:valueOf(java.lang.String):com.intellij.ide.ui.MainMenuDisplayMode
+- s:values():com.intellij.ide.ui.MainMenuDisplayMode[]
+f:com.intellij.ide.ui.MainMenuDisplayMode$Companion
+- f:valueOf(java.lang.String):com.intellij.ide.ui.MainMenuDisplayMode
 e:com.intellij.ide.ui.NavBarLocation
 - java.lang.Enum
 - sf:BOTTOM:com.intellij.ide.ui.NavBarLocation
@@ -257,9 +272,11 @@ f:com.intellij.ide.ui.NotRoamableUiOptions
 - f:overrideLafFonts:Z
 - f:overrideLafFontsWasMigrated:Z
 - f:presentationModeIdeScale:F
+- f:xNextStripe:Z
 - <init>():V
 - f:component1():com.intellij.ide.ui.AntialiasingType
 - f:component10():Z
+- f:component11():Z
 - f:component2():com.intellij.ide.ui.AntialiasingType
 - f:component3():java.lang.String
 - f:component4():F
@@ -268,8 +285,8 @@ f:com.intellij.ide.ui.NotRoamableUiOptions
 - f:component7():F
 - f:component8():Z
 - f:component9():Z
-- f:copy(com.intellij.ide.ui.AntialiasingType,com.intellij.ide.ui.AntialiasingType,java.lang.String,F,F,F,F,Z,Z,Z):com.intellij.ide.ui.NotRoamableUiOptions
-- bs:copy$default(com.intellij.ide.ui.NotRoamableUiOptions,com.intellij.ide.ui.AntialiasingType,com.intellij.ide.ui.AntialiasingType,java.lang.String,F,F,F,F,Z,Z,Z,I,java.lang.Object):com.intellij.ide.ui.NotRoamableUiOptions
+- f:copy(com.intellij.ide.ui.AntialiasingType,com.intellij.ide.ui.AntialiasingType,java.lang.String,F,F,F,F,Z,Z,Z,Z):com.intellij.ide.ui.NotRoamableUiOptions
+- bs:copy$default(com.intellij.ide.ui.NotRoamableUiOptions,com.intellij.ide.ui.AntialiasingType,com.intellij.ide.ui.AntialiasingType,java.lang.String,F,F,F,F,Z,Z,Z,Z,I,java.lang.Object):com.intellij.ide.ui.NotRoamableUiOptions
 - equals(java.lang.Object):Z
 - hashCode():I
 f:com.intellij.ide.ui.NotRoamableUiSettings
@@ -354,6 +371,7 @@ f:com.intellij.ide.ui.UISettings
 - sf:getInstanceOrNull():com.intellij.ide.ui.UISettings
 - f:getKeepPopupsForToggles():Z
 - f:getLeftHorizontalSplit():Z
+- f:getMainMenuDisplayMode():com.intellij.ide.ui.MainMenuDisplayMode
 - f:getMarkModifiedTabsWithAsterisk():Z
 - f:getMaxLookupListHeight():I
 - f:getMaxLookupWidth():I
@@ -375,7 +393,6 @@ f:com.intellij.ide.ui.UISettings
 - f:getReuseNotModifiedTabs():Z
 - f:getRightHorizontalSplit():Z
 - f:getScrollTabLayoutInEditor():Z
-- f:getSeparateMainMenu():Z
 - sf:getShadowInstance():com.intellij.ide.ui.UISettings
 - f:getShowBreakpointsOverLineNumbers():Z
 - f:getShowCloseButton():Z
@@ -440,6 +457,7 @@ f:com.intellij.ide.ui.UISettings
 - f:setIdeScale(F):V
 - f:setKeepPopupsForToggles(Z):V
 - f:setLeftHorizontalSplit(Z):V
+- f:setMainMenuDisplayMode(com.intellij.ide.ui.MainMenuDisplayMode):V
 - f:setMarkModifiedTabsWithAsterisk(Z):V
 - f:setMaxLookupListHeight(I):V
 - f:setMaxLookupWidth(I):V
@@ -460,7 +478,6 @@ f:com.intellij.ide.ui.UISettings
 - f:setRememberSizeForEachToolWindowOldUI(Z):V
 - f:setReuseNotModifiedTabs(Z):V
 - f:setRightHorizontalSplit(Z):V
-- f:setSeparateMainMenu(Z):V
 - f:setShowBreakpointsOverLineNumbers(Z):V
 - f:setShowDirectoryForNonUniqueFilenames(Z):V
 - f:setShowEditorToolTip(Z):V
@@ -510,6 +527,7 @@ f:com.intellij.ide.ui.UISettings$Companion
 - f:setupFractionalMetrics(javax.swing.JComponent):V
 com.intellij.ide.ui.UISettingsListener
 - java.util.EventListener
+- sf:TOPIC:com.intellij.util.messages.Topic
 - a:uiSettingsChanged(com.intellij.ide.ui.UISettings):V
 f:com.intellij.ide.ui.UISettingsState
 - com.intellij.openapi.components.BaseState
@@ -548,6 +566,7 @@ f:com.intellij.ide.ui.UISettingsState
 - f:getHideToolStripes():Z
 - f:getKeepPopupsForToggles():Z
 - f:getLeftHorizontalSplit():Z
+- f:getMainMenuDisplayMode():java.lang.String
 - f:getMarkModifiedTabsWithAsterisk():Z
 - f:getMaxLookupListHeight():I
 - f:getMaxLookupWidth():I
@@ -635,6 +654,7 @@ f:com.intellij.ide.ui.UISettingsState
 - f:setHideToolStripes(Z):V
 - f:setKeepPopupsForToggles(Z):V
 - f:setLeftHorizontalSplit(Z):V
+- f:setMainMenuDisplayMode(java.lang.String):V
 - f:setMarkModifiedTabsWithAsterisk(Z):V
 - f:setMaxLookupListHeight(I):V
 - f:setMaxLookupWidth(I):V
@@ -973,6 +993,15 @@ com.intellij.ide.util.treeView.smartTree.TreeModel
 - a:getGroupers():com.intellij.ide.util.treeView.smartTree.Grouper[]
 - a:getRoot():com.intellij.ide.util.treeView.smartTree.TreeElement
 - a:getSorters():com.intellij.ide.util.treeView.smartTree.Sorter[]
+com.intellij.injected.editor.EditorWindow
+- com.intellij.openapi.editor.Editor
+- com.intellij.openapi.util.UserDataHolderEx
+- a:getDelegate():com.intellij.openapi.editor.Editor
+- a:getDocument():com.intellij.injected.editor.DocumentWindow
+- a:getInjectedFile():com.intellij.psi.PsiFile
+- a:hostToInjected(com.intellij.openapi.editor.LogicalPosition):com.intellij.openapi.editor.LogicalPosition
+- a:injectedToHost(com.intellij.openapi.editor.LogicalPosition):com.intellij.openapi.editor.LogicalPosition
+- a:isValid():Z
 com.intellij.injected.editor.InjectedFileChangesHandler
 - com.intellij.openapi.Disposable
 - a:commitToOriginal(com.intellij.openapi.editor.event.DocumentEvent):V
@@ -1951,6 +1980,7 @@ com.intellij.openapi.editor.LineNumberConverter$Increasing
 - getMaxLineNumber(com.intellij.openapi.editor.Editor):java.lang.Integer
 com.intellij.openapi.editor.LineWrapPositionStrategy
 - a:calculateWrapPosition(com.intellij.openapi.editor.Document,com.intellij.openapi.project.Project,I,I,I,Z,Z):I
+- canWrapLineAtOffset(java.lang.CharSequence,I):Z
 c:com.intellij.openapi.editor.LogicalPosition
 - java.lang.Comparable
 - f:column:I
@@ -2086,6 +2116,7 @@ f:com.intellij.openapi.editor.VisualPosition
 - leanRight(Z):com.intellij.openapi.editor.VisualPosition
 f:com.intellij.openapi.editor.actions.LanguageWordBoundaryFilter
 - com.intellij.lang.LanguageExtension
+- sf:INSTANCE:com.intellij.openapi.editor.actions.LanguageWordBoundaryFilter
 - s:getInstance():com.intellij.openapi.editor.actions.LanguageWordBoundaryFilter
 c:com.intellij.openapi.editor.actions.WordBoundaryFilter
 - <init>():V
@@ -2677,7 +2708,7 @@ f:com.intellij.openapi.fileTypes.SyntaxHighlighterLanguageFactory
 - com.intellij.lang.LanguageExtension
 com.intellij.openapi.fileTypes.SyntaxHighlighterProvider
 - a:create(com.intellij.openapi.fileTypes.FileType,com.intellij.openapi.project.Project,com.intellij.openapi.vfs.VirtualFile):com.intellij.openapi.fileTypes.SyntaxHighlighter
-a:com.intellij.openapi.ide.CopyPasteManager
+Fa:com.intellij.openapi.ide.CopyPasteManager
 - sf:CUT_COLOR:java.awt.Color
 - a:addContentChangedListener(com.intellij.openapi.ide.CopyPasteManager$ContentChangedListener):V
 - a:addContentChangedListener(com.intellij.openapi.ide.CopyPasteManager$ContentChangedListener,com.intellij.openapi.Disposable):V
@@ -2688,9 +2719,12 @@ a:com.intellij.openapi.ide.CopyPasteManager
 - a:getContents(java.awt.datatransfer.DataFlavor):java.lang.Object
 - s:getCutColor():java.awt.Color
 - s:getInstance():com.intellij.openapi.ide.CopyPasteManager
+- getSystemSelectionContents():java.awt.datatransfer.Transferable
 - a:isCutElement(java.lang.Object):Z
+- isSystemSelectionSupported():Z
 - a:removeContentChangedListener(com.intellij.openapi.ide.CopyPasteManager$ContentChangedListener):V
 - a:setContents(java.awt.datatransfer.Transferable):V
+- setSystemSelectionContents(java.awt.datatransfer.Transferable):V
 - a:stopKillRings():V
 - a:stopKillRings(com.intellij.openapi.editor.Document):V
 com.intellij.openapi.ide.CopyPasteManager$ContentChangedListener

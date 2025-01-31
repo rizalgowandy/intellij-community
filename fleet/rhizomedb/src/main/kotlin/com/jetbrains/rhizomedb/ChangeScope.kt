@@ -3,6 +3,7 @@ package com.jetbrains.rhizomedb
 
 import com.jetbrains.rhizomedb.impl.entity
 import com.jetbrains.rhizomedb.impl.generateSeed
+import fleet.util.openmap.Key
 import fleet.util.openmap.MutableOpenMap
 import kotlin.reflect.KClass
 
@@ -230,7 +231,7 @@ interface ChangeScope {
    * */
   fun <E : Entity> EntityType<E>.new(builder: EntityBuilder<E> = EntityBuilder {}): E = let { entityType ->
     require(entity(entityType.eid) != null) {
-      "Entity type '${entityType.entityTypeIdent}' is not registered. It should be registered automatically, report and use ChangeScope.register as mitigation"
+      "Entity type '${entityType.entityTypeIdent}' is not registered.\nDid you export package to rhizomedb?\nIt should be registered automatically, report and use ChangeScope.register as mitigation"
     }
     val eid = context.impl.createEntity(pipeline = context,
                                         entityTypeEid = entityType.eid,
@@ -250,16 +251,9 @@ interface ChangeScope {
         builder.build(it)
       }
     }
-
-  /**
-   * Support for legacy entity definitions
-   * */
-  fun <T : LegacyEntity> new(
-    c: KClass<T>,
-    part: Part = defaultPart,
-    constructor: T.() -> Unit = {},
-  ): T =
-    withDefaultPart(part) {
-      context.new(c, constructor)
-    }
 }
+
+/**
+ * Key for data associated with a particular change
+ */
+interface ChangeScopeKey<V : Any> : Key<V, ChangeScope>

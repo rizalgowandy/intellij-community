@@ -12,7 +12,8 @@ object FreezeAnalyzer {
    * If analysis fails, it returns `null`.
    */
   fun analyzeFreeze(threadDump: String, testName: String? = null): FreezeAnalysisResult? {
-    val threadDumpParsed = ThreadDumpParser.parse(threadDump)
+    val threadDumpWithoutCoroutine = threadDump.split("---------- Coroutine dump ----------")[0]
+    val threadDumpParsed = ThreadDumpParser.parse(threadDumpWithoutCoroutine)
     val edtThread = threadDumpParsed.firstOrNull { it.isEDT }
     return edtThread?.let { analyzeEDThread(it, threadDumpParsed, testName) }
   }
@@ -21,7 +22,8 @@ object FreezeAnalyzer {
     when {
       !edt.isWaiting && !edt.isSleeping -> findFirstRelevantMethod(edt.stackTrace)?.let { FreezeAnalysisResult("EDT is busy with $it", listOf(edt)) }
       edt.isWaiting && isWriteLockWait(edt) -> findThreadThatTookReadWriteLock(threadDumpParsed)?.let { FreezeAnalysisResult(it.message, it.threads + listOf(edt), it.additionalMessage) }
-      edt.isWaiting && !isEDTFreezed(edt) -> FreezeAnalysisResult("${testName ?: ""}: EDT is not blocked/busy (freeze can be the result of extensive GC)", listOf(edt))
+      edt.isWaiting && !isEDTFreezed(edt) && testName == null -> null
+      edt.isWaiting && !isEDTFreezed(edt) && testName != null -> FreezeAnalysisResult("${testName}: EDT is not blocked/busy (freeze can be the result of extensive GC)", listOf(edt))
       edt.isWaiting -> analyzeLock(edt, threadDumpParsed)
       else -> null
     }

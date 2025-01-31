@@ -37,12 +37,23 @@ object WebAnimationUtils {
     return createSingleContentHtmlPage(body, background, componentId)
   }
 
-  fun createVideoHtmlPage(videoBase64: String, background: Color): String {
+  fun createVideoHtmlPageWithUrl(
+    videoUrl: String,
+    background: Color,
+    stubImageUrl: String? = null,
+    autoplay: Boolean = true,
+    loop: Boolean = true,
+    injectedVideoEndedListener: String? = null,
+    injectedVideoLoadingErrorListener: String? = null,
+  ): String {
     val componentId = "video"
+    val sourceId = "video-source"
+    @Suppress("HardCodedStringLiteral")
     val scriptText =
       """
         document.addEventListener("DOMContentLoaded", function() {
             let video = document.getElementById("$componentId");
+            let source = document.getElementById("$sourceId");
 
             window.playVideo = function() {
                 video.play();
@@ -51,6 +62,12 @@ object WebAnimationUtils {
             window.pauseVideo = function() {
                 video.pause();
             }
+            
+            window.resetVideo = function() {
+              video.currentTime = 0;
+            }
+            ${if (injectedVideoEndedListener != null) """video.addEventListener('ended', function() { $injectedVideoEndedListener });""" else ""}
+            ${if (injectedVideoLoadingErrorListener != null) """source.addEventListener('error', function() { $injectedVideoLoadingErrorListener });""" else ""}
         });
     """.trimIndent()
 
@@ -58,12 +75,15 @@ object WebAnimationUtils {
 
     val videoTag = HtmlChunk.tag("video")
       .attr("id", componentId)
-      .attr("autoplay")
-      .attr("loop")
+      .let { if (autoplay) it.attr("autoplay") else it }
+      .let { if (loop) it.attr("loop") else it }
       .attr("muted")
+      .let { if (stubImageUrl != null) it.attr("poster", stubImageUrl) else it }
       .child(HtmlChunk.tag("source")
                .attr("type", "video/webm")
-               .attr("src", "data:video/webm;base64,$videoBase64"))
+               .attr("src", videoUrl)
+               .attr("id", sourceId)
+      )
     val body = HtmlChunk.body()
       .child(script)
       .child(videoTag)

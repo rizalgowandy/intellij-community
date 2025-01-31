@@ -11,6 +11,8 @@
                          key="configurable.TerminalOptionsConfigurable.display.name"
                          id="terminal" instance="org.jetbrains.plugins.terminal.TerminalOptionsConfigurable"/>
 
+    <fileEditorProvider id="terminal-session-editor" implementation="org.jetbrains.plugins.terminal.vfs.TerminalSessionEditorProvider"/>
+
     <applicationService serviceImplementation="org.jetbrains.plugins.terminal.TerminalOptionsProvider"/>
 
     <applicationService serviceImplementation="org.jetbrains.plugins.terminal.arrangement.TerminalCommandHistoryManager"/>
@@ -19,8 +21,10 @@
 
     <registryKey key="terminal.Ctrl-E.opens.RecentFiles.popup" defaultValue="false"
                  description="Ctrl+E in terminal opens 'Recent Files' popup on Linux/Windows"/>
-    <registryKey key="terminal.new.ui" defaultValue="true"
+    <registryKey key="terminal.new.ui" defaultValue="false"
                  description="Enable new terminal UI"/>
+    <registryKey key="terminal.new.ui.reworked" defaultValue="false"
+                 description="Enable reworked new terminal UI"/>
     <registryKey key="terminal.new.ui.fish" defaultValue="false"
                  description="Enable new terminal for Fish"/>
     <registryKey key="terminal.new.ui.powershell.win11" defaultValue="true"
@@ -29,12 +33,15 @@
                  description="Enable new terminal for PowerShell on Windows 10"/>
     <registryKey key="terminal.new.ui.powershell.unix" defaultValue="false"
                  description="Enable new terminal for PowerShell on Unix"/>
-    <registryKey key="terminal.new.ui.show.promotion" defaultValue="true"
+    <registryKey key="terminal.new.ui.show.promotion" defaultValue="false"
                  description="Whether to show the GotIt tooltip with a proposal to try the New Terminal"/>
     <registryKey key="terminal.new.ui.inline.completion" defaultValue="false"
                  description="Whether to show the inline (grey text) completion in the New Terminal"/>
     <registryKey key="terminal.new.ui.autocompletion" defaultValue="true"
                  description="Whether to run autocompletion in the New Terminal"/>
+    <registryKey key="terminal.classic.refresh.vfs.on.shell.command.finished" defaultValue="true"
+                 description="Refresh VFS when shell commands are finished in the Classic Terminal.
+                  May not work 100% reliably as it uses heuristics to determine when command is finished."/>
 
     <experimentalFeature id="terminal.shell.command.handling" percentOfUsers="100"/>
     <terminal.shellCommandHandler implementation="org.jetbrains.plugins.terminal.RunAnythingTerminalBridge"/>
@@ -42,14 +49,13 @@
     <selectInTarget implementation="org.jetbrains.plugins.terminal.view.SelectInTerminal"/>
 
     <actionPromoter implementation="org.jetbrains.plugins.terminal.action.TerminalCtrlCActionsPromoter"/>
+    <actionPromoter implementation="org.jetbrains.plugins.terminal.action.SendShortcutToTerminalActionPromoter"/>
     <editorActionHandler action="EditorEnter" implementationClass="org.jetbrains.plugins.terminal.block.prompt.TerminalEnterHandler"
                          id="terminalEnter" order="first"/>
     <editorActionHandler action="EditorUp" implementationClass="org.jetbrains.plugins.terminal.block.history.TerminalCaretUpHandler"
                          id="terminalUp" order="first"/>
     <editorActionHandler action="EditorDown" implementationClass="org.jetbrains.plugins.terminal.block.history.TerminalCaretDownHandler"
                          id="terminalDown" order="first"/>
-    <editorActionHandler action="Find" implementationClass="org.jetbrains.plugins.terminal.block.output.TerminalFindHandler"
-                         id="terminalFind" order="first"/>
     <editorActionHandler action="FindNext" implementationClass="org.jetbrains.plugins.terminal.block.output.TerminalFindNextHandler"
                          id="terminalFindNext" order="first"/>
     <editorActionHandler action="FindPrevious" implementationClass="org.jetbrains.plugins.terminal.block.output.TerminalFindPreviousHandler"
@@ -85,6 +91,11 @@
                                   implementationClass="org.jetbrains.plugins.terminal.block.prompt.lang.TerminalPromptFileViewProviderFactory"/>
     <highlightErrorFilter implementation="org.jetbrains.plugins.terminal.block.prompt.lang.TerminalPromptErrorFilter"/>
 
+    <lang.parserDefinition language="TerminalOutput"
+                           implementationClass="org.jetbrains.plugins.terminal.block.reworked.lang.TerminalOutputParserDefinition"/>
+    <lang.lineWrapStrategy language="TerminalOutput"
+                           implementationClass="org.jetbrains.plugins.terminal.block.reworked.lang.TerminalLineWrapPositionStrategy"/>
+
     <advancedSetting bundle="messages.TerminalBundle"  id="terminal.character.encoding" default="UTF-8" groupKey="group.advanced.settings.terminal"/>
     <applicationService serviceInterface="com.intellij.terminal.search.JediTermSearchComponentProvider"
                         serviceImplementation="org.jetbrains.plugins.terminal.search.JediTermSearchComponentProviderImpl"/>
@@ -95,6 +106,9 @@
     <localTerminalCustomizer implementation="org.jetbrains.plugins.terminal.TerminalCommandHandlerCustomizer"/>
     <commandSpecsProvider implementation="org.jetbrains.plugins.terminal.block.completion.spec.json.ShellDefaultCommandSpecsProvider"/>
     <commandSpecsProvider implementation="org.jetbrains.plugins.terminal.block.completion.spec.specs.ShellCodeBasedCommandSpecsProvider"/>
+    <escapeHandler implementation="org.jetbrains.plugins.terminal.action.reworked.CancelSelection" />
+    <escapeHandler implementation="org.jetbrains.plugins.terminal.action.reworked.CloseSearch" />
+    <escapeHandler implementation="org.jetbrains.plugins.terminal.action.reworked.SelectEditor" />
   </extensions>
 
   <extensionPoints>
@@ -116,6 +130,8 @@
                     interface="org.jetbrains.plugins.terminal.block.history.TerminalCommandHistoryProvider"/>
     <extensionPoint qualifiedName="org.jetbrains.plugins.terminal.exp.commandBlockHighlighterProvider"
                     interface="org.jetbrains.plugins.terminal.block.output.highlighting.TerminalCommandBlockHighlighterProvider" dynamic="true"/>
+    <extensionPoint qualifiedName="org.jetbrains.plugins.terminal.escapeHandler"
+                    interface="org.jetbrains.plugins.terminal.action.TerminalEscapeHandler" dynamic="true"/>
   </extensionPoints>
 
   <projectListeners>

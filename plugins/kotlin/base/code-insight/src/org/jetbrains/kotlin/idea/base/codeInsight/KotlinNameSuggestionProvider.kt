@@ -13,6 +13,7 @@ import org.jetbrains.annotations.Nls
 import org.jetbrains.kotlin.asJava.toLightElements
 import org.jetbrains.kotlin.psi.*
 import org.jetbrains.kotlin.utils.SmartList
+import org.jetbrains.kotlin.utils.addIfNotNull
 import org.jetbrains.kotlin.utils.addToStdlib.firstIsInstanceOrNull
 
 abstract class KotlinNameSuggestionProvider : NameSuggestionProvider {
@@ -68,6 +69,8 @@ abstract class KotlinNameSuggestionProvider : NameSuggestionProvider {
                     )
                 }
             }
+        } else if (element is KtNamedDeclaration ) {
+            result.addIfNotNull(element.name)
         }
 
         return null

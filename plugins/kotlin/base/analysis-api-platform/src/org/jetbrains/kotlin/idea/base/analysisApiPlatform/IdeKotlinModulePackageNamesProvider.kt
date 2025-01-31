@@ -7,7 +7,6 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.module.Module
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.roots.OrderRootType
 import com.intellij.openapi.util.LowMemoryWatcher
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.search.GlobalSearchScope
@@ -17,14 +16,9 @@ import org.jetbrains.kotlin.analysis.api.platform.modification.KotlinGlobalModul
 import org.jetbrains.kotlin.analysis.api.platform.modification.KotlinModuleStateModificationKind
 import org.jetbrains.kotlin.analysis.api.platform.modification.KotlinModuleStateModificationListener
 import org.jetbrains.kotlin.analysis.api.platform.utils.NullableConcurrentCache
-import org.jetbrains.kotlin.analysis.api.projectStructure.KaBuiltinsModule
-import org.jetbrains.kotlin.analysis.api.projectStructure.KaLibrarySourceModule
-import org.jetbrains.kotlin.analysis.api.projectStructure.KaModule
+import org.jetbrains.kotlin.analysis.api.projectStructure.*
 import org.jetbrains.kotlin.idea.base.indices.names.KotlinBinaryRootToPackageIndex
 import org.jetbrains.kotlin.idea.base.indices.names.isSupportedByBinaryRootToPackageIndex
-import org.jetbrains.kotlin.idea.base.projectStructure.KtLibraryModuleByModuleInfo
-import org.jetbrains.kotlin.idea.base.projectStructure.KtSdkLibraryModuleByModuleInfo
-import org.jetbrains.kotlin.idea.base.projectStructure.KtSourceModuleByModuleInfo
 import org.jetbrains.kotlin.name.StandardClassIds
 import org.jetbrains.kotlin.utils.addToStdlib.flattenTo
 
@@ -69,9 +63,9 @@ internal class IdeKotlinModulePackageNamesProvider(private val project: Project)
 
     fun computePackageNames(module: KaModule): Set<String>? =
         when (module) {
-            is KtSourceModuleByModuleInfo -> computeSourceModulePackageSet(module)
+            is KaSourceModule -> computeSourceModulePackageSet(module)
 
-            is KtSdkLibraryModuleByModuleInfo, is KtLibraryModuleByModuleInfo ->
+            is KaLibraryModule ->
                 cache.getOrPut(module) { module ->
                     module.binaryRootFiles?.let { computePackageSetFromBinaryRoots(it) }
                 }
@@ -82,9 +76,9 @@ internal class IdeKotlinModulePackageNamesProvider(private val project: Project)
             else -> null
         }
 
-    private fun computeSourceModulePackageSet(module: KtSourceModuleByModuleInfo): Set<String>? = null // KTIJ-27450
+    private fun computeSourceModulePackageSet(module: KaSourceModule): Set<String>? = null // KTIJ-27450
 
-    private fun computePackageSetFromBinaryRoots(binaryRoots: Array<VirtualFile>): Set<String>? {
+    private fun computePackageSetFromBinaryRoots(binaryRoots: Collection<VirtualFile>): Set<String>? {
         if (binaryRoots.any { !it.isSupportedByBinaryRootToPackageIndex }) {
             return null
         }
@@ -139,10 +133,9 @@ internal class IdeKotlinModulePackageNamesProvider(private val project: Project)
         binaryRootsCache.map.clear()
     }
 
-    private val KaModule.binaryRootFiles: Array<VirtualFile>?
+    private val KaModule.binaryRootFiles: Collection<VirtualFile>?
         get() = when (this) {
-            is KtSdkLibraryModuleByModuleInfo -> moduleInfo.sdk.rootProvider.getFiles(OrderRootType.CLASSES)
-            is KtLibraryModuleByModuleInfo -> libraryInfo.library.getFiles(OrderRootType.CLASSES)
+            is KaLibraryModule -> binaryVirtualFiles
             else -> null
         }
 

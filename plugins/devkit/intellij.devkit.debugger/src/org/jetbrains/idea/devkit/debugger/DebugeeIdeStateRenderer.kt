@@ -1,7 +1,11 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.idea.devkit.debugger
 
-import com.intellij.debugger.engine.*
+import com.intellij.debugger.engine.DebugProcessImpl
+import com.intellij.debugger.engine.JavaStackFrame
+import com.intellij.debugger.engine.JavaValue
+import com.intellij.debugger.engine.SuspendContextImpl
+import com.intellij.debugger.engine.evaluation.EvaluateException
 import com.intellij.debugger.engine.evaluation.EvaluationContext
 import com.intellij.debugger.engine.evaluation.EvaluationContextImpl
 import com.intellij.debugger.engine.jdi.StackFrameProxy
@@ -17,7 +21,7 @@ import com.intellij.xdebugger.impl.frame.XFramesView
 import com.sun.jdi.BooleanValue
 import com.sun.jdi.ClassType
 import com.sun.jdi.ObjectReference
-import java.util.*
+import org.jetbrains.idea.devkit.debugger.settings.DevKitDebuggerSettings
 
 /**
  * @see com.intellij.ide.debug.ApplicationStateDebugSupport
@@ -34,35 +38,48 @@ private const val ACTIONS_KT_FQN = "com.intellij.openapi.application.ActionsKt"
 
 internal data class IdeState(val readAllowed: Boolean?, val writeAllowed: Boolean?)
 
-private val cachedIdeState = WeakHashMap<SuspendContext, IdeState?>()
-internal fun getIdeState(evaluationContext: EvaluationContext): IdeState? = try {
-  cachedIdeState.computeIfAbsent(evaluationContext.suspendContext) f@{
-    val supportClass = findClassOrNull(evaluationContext, SUPPORT_CLASS_FQN) as? ClassType ?: return@f null
+internal fun getIdeState(evaluationContext: EvaluationContext): IdeState? {
+  try {
+    val supportClass = findClassOrNull(evaluationContext, SUPPORT_CLASS_FQN) as? ClassType ?: return null
+    val debugProcess = evaluationContext.debugProcess as? DebugProcessImpl ?: return null
+    val suspendContext = evaluationContext.suspendContext as? SuspendContextImpl ?: return null
+    if (!debugProcess.isEvaluationPossible(suspendContext)) return null
     val state = evaluationContext.computeAndKeep {
-      DebuggerUtilsImpl.invokeClassMethod(evaluationContext, supportClass, GET_STATE_METHOD_NAME, GET_STATE_METHOD_SIGNATURE) as? ObjectReference
-    } ?: return@f null
+      DebuggerUtilsImpl.invokeClassMethod(evaluationContext, supportClass, GET_STATE_METHOD_NAME, GET_STATE_METHOD_SIGNATURE, emptyList()) as? ObjectReference
+    } ?: return null
 
     val stateClass = state.referenceType()
     val fieldValues = state.getValues(stateClass.allFields()).mapKeys { it.key.name() }
 
     val readField = (fieldValues[READ_ACTION_ALLOWED_FIELD_NAME] as? BooleanValue)?.value()
     val writeField = (fieldValues[WRITE_ACTION_ALLOWED_FIELD_NAME] as? BooleanValue)?.value()
-    IdeState(readAllowed = readField, writeAllowed = writeField)
+    return IdeState(readAllowed = readField, writeAllowed = writeField)
   }
-}
-catch (e: Exception) {
-  DebuggerUtilsImpl.logError(e)
-  null
+  catch (e: Exception) {
+    if (!logIncorrectSuspendState(e)) {
+      DebuggerUtilsImpl.logError(e)
+    }
+    return null
+  }
 }
 
 
 internal class DebugeeIdeStateRenderer : ExtraDebugNodesProvider {
   override fun addExtraNodes(evaluationContext: EvaluationContext, children: XValueChildrenList) {
+    if (!DevKitDebuggerSettings.getInstance().showIdeState) return
     if (!Registry.`is`("devkit.debugger.show.ide.state")) return
     val ideState = getIdeState(evaluationContext) ?: return
     if (ideState.readAllowed == null && ideState.writeAllowed == null) return
 
-    val (isReadActionAllowed, isWriteActionAllowed) = (ideState.readAllowed to ideState.writeAllowed).adjustLockStatus(evaluationContext)
+    val (isReadActionAllowed, isWriteActionAllowed) = try {
+      (ideState.readAllowed to ideState.writeAllowed).adjustLockStatus(evaluationContext)
+    }
+    catch (e: EvaluateException) {
+      if (!logIncorrectSuspendState(e)) {
+        DebuggerUtilsImpl.logError(e)
+      }
+      return
+    }
 
     fun icon(isAvailable: Boolean) = if (isAvailable) "✓" else "✗"
     children.addTopValue(object : XNamedValue(DevKitDebuggerBundle.message("debugger.ide.state")) {
@@ -125,6 +142,8 @@ private fun getReadWriteAccessStateBasedOnCurrentFrame(evaluationContext: Evalua
   val currentXFrame = (evaluationContext.suspendContext as SuspendContextImpl).debugProcess.session.xDebugSession?.currentStackFrame
   if (currentXFrame !is JavaStackFrame) return null
   val currentFrame = currentXFrame.stackFrameProxy
+  // No need to adjust as the first frame is always correct
+  if (currentFrame.frameIndex == 0) return null
 
   val thread = evaluationContext.suspendContext.thread ?: return null
   val frames = List(thread.frameCount()) { thread.frame(it) }

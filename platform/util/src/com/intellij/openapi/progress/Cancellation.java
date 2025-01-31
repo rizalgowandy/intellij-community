@@ -5,14 +5,18 @@ import com.intellij.concurrency.ThreadContext;
 import com.intellij.openapi.application.AccessToken;
 import com.intellij.openapi.util.ThrowableComputable;
 import com.intellij.util.DebugAttachDetectorArgs;
+import kotlin.coroutines.CoroutineContext;
 import kotlinx.coroutines.Job;
 import kotlinx.coroutines.JobKt;
+import kotlinx.coroutines.NonCancellable;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.ApiStatus.Internal;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.VisibleForTesting;
 
 import java.util.concurrent.CancellationException;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 
@@ -60,29 +64,50 @@ public final class Cancellation {
   }
 
   /**
-   * {@code true} if running in a non-cancelable section started with {@link #computeInNonCancelableSection} in this thread,
-   * otherwise {@code false}
-   */
-  // do not supply initial value to conserve memory
-  private static final ThreadLocal<Boolean> isInNonCancelableSection = new ThreadLocal<>();
-
-  /**
    * This flag is used only while debugging an IDE.
    *
    * @see Cancellation#initThreadNonCancellableState()
    */
   private static final ThreadLocal<DebugNonCancellableState> debugIsInNonCancelableSection = new ThreadLocal<>();
 
+
+  /**
+   * Obsolescence note: please do not rely on a block of code being non-cancellable, as it hinders the composability of your code.
+   * For example:
+   * <pre>
+   * Cancellation.executeInNonCancellableSection(() -> {
+   *   Cancellation.isInNonCancellableSection(); // this is true
+   * })
+   *
+   * Cancellation.executeInNonCancellableSection(() -> {
+   *   NonBlockingReadAction.executeSynchronously(() -> {
+   *      Cancellation.isInNonCancellableSection(); // this is false, as cancellable read actions override the cancellation machinery
+   *   })
+   * })
+   * </pre>
+   */
+  @ApiStatus.Obsolete
   public static boolean isInNonCancelableSection() {
     if (isInNonCancelableSectionInternal()) return true;
     // Avoid thread-local access when the debugger is not enabled.
     if (!DebugNonCancellableState.isDebugEnabled) return false;
+    // Check whether is still attached in case debugger connection is lost before cleanup
+    if (!DebugNonCancellableState.isAttached()) return false;
     DebugNonCancellableState state = debugIsInNonCancelableSection.get();
     return state != null && state.inNonCancelableSection;
   }
 
   private static boolean isInNonCancelableSectionInternal() {
-    return isInNonCancelableSection.get() != null;
+    CoroutineContext context = ThreadContext.currentThreadContext();
+    Job job = context.get(Job.Key);
+    return job != null && checkIfCurrentJobIsNonCancellable(job);
+  }
+
+  private static boolean checkIfCurrentJobIsNonCancellable(@NotNull Job job) {
+    // An alternative approach here is to check that `NonCancellable` is a parent of the job.
+    // This would be wrong, as `NonCancellable` severs the connection of a computation to its current job, but it does not do more than that;
+    // The inner computations within `NonCancellable` can still be cancellable: for example, a non-blocking read action does this.
+    return job == NonCancellable.INSTANCE; // referential equality as it is a singleton
   }
 
   /**
@@ -109,12 +134,9 @@ public final class Cancellation {
     if (isInNonCancelableSectionInternal()) {
       return computable.compute();
     }
-    try {
-      isInNonCancelableSection.set(Boolean.TRUE);
+    try (@NotNull AccessToken ignored = ThreadContext.installThreadContext(
+      ThreadContext.currentThreadContext().plus(NonCancellable.INSTANCE), true)) {
       return computable.compute();
-    }
-    finally {
-      isInNonCancelableSection.remove();
     }
   }
 
@@ -136,13 +158,7 @@ public final class Cancellation {
       return AccessToken.EMPTY_ACCESS_TOKEN;
     }
 
-    isInNonCancelableSection.set(Boolean.TRUE);
-    return new AccessToken() {
-      @Override
-      public void finish() {
-        isInNonCancelableSection.remove();
-      }
-    };
+    return ThreadContext.installThreadContext(ThreadContext.currentThreadContext().plus(NonCancellable.INSTANCE), true);
   }
 
   /**
@@ -170,8 +186,7 @@ public final class Cancellation {
    * @return cancellability state of the current thread which can be adjusted by the debugger
    */
   @SuppressWarnings("unused")
-  @NotNull
-  private static DebugNonCancellableState initThreadNonCancellableState() {
+  private static @NotNull DebugNonCancellableState initThreadNonCancellableState() {
     DebugNonCancellableState state = debugIsInNonCancelableSection.get();
     if (state != null) return state;
     state = new DebugNonCancellableState();
@@ -184,12 +199,24 @@ public final class Cancellation {
    * Do not modify the names without the corresponding updates in the devkit plugin.
    */
   private static class DebugNonCancellableState {
+    private static final int ATTACH_CHECK_TIMEOUT_S = 2;
     private static final boolean isDebugEnabled = DebugAttachDetectorArgs.isDebugEnabled();
+    private static volatile long lastUpdateNs = System.nanoTime();
+    private static volatile boolean isDebugAttached = DebugAttachDetectorArgs.isAttached();
 
     /**
      * This field is set to true only via debugger.
      */
     @SuppressWarnings("FieldMayBeFinal")
     private volatile boolean inNonCancelableSection = false;
+
+    private static boolean isAttached() {
+      long current = System.nanoTime();
+      if (TimeUnit.NANOSECONDS.toSeconds(current - lastUpdateNs) > ATTACH_CHECK_TIMEOUT_S) {
+        lastUpdateNs = current;
+        isDebugAttached = DebugAttachDetectorArgs.isAttached();
+      }
+      return isDebugAttached;
+    }
   }
 }

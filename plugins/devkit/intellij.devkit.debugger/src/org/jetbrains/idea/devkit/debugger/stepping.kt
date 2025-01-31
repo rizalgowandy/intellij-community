@@ -2,50 +2,49 @@
 package org.jetbrains.idea.devkit.debugger
 
 import com.intellij.debugger.engine.*
+import com.intellij.debugger.engine.evaluation.EvaluateException
 import com.intellij.debugger.engine.evaluation.EvaluationContextImpl
 import com.intellij.debugger.impl.DebuggerManagerListener
 import com.intellij.debugger.impl.DebuggerSession
 import com.intellij.debugger.impl.DebuggerUtilsImpl
 import com.intellij.debugger.jdi.ThreadReferenceProxyImpl
-import com.intellij.openapi.Disposable
-import com.intellij.openapi.diagnostic.thisLogger
-import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.util.registry.Registry
 import com.sun.jdi.BooleanValue
 import com.sun.jdi.ClassType
 import com.sun.jdi.ObjectReference
 import com.sun.jdi.ReferenceType
-import java.util.concurrent.ConcurrentHashMap
+import java.util.*
 
 private const val CANCELLATION_FQN = "com.intellij.openapi.progress.Cancellation"
 
 private object PauseListener : DebuggerManagerListener {
-  private val sessions = ConcurrentHashMap<DebuggerSession, SessionThreadsData>()
+  private val sessions = WeakHashMap<DebuggerSession, SessionThreadsData>()
 
   override fun sessionAttached(session: DebuggerSession?) {
     if (session == null) return
-    val disposable = Disposer.newDisposable()
-    sessions[session] = SessionThreadsData(disposable)
+    sessions[session] = SessionThreadsData()
     session.process.addDebugProcessListener(object : DebugProcessListener {
       override fun paused(suspendContext: SuspendContext) {
         val context = suspendContext as? SuspendContextImpl ?: return
-        getSessionData(context.debugProcess.session)?.resetNonCancellableSection(context)
+        val sessionData = getSessionData(context.debugProcess.session) ?: return
+        sessionData.setNonCancellableSection(context)
       }
-    }, disposable)
+    })
   }
 
   override fun sessionDetached(session: DebuggerSession?) {
     if (session == null) return
-    val sessionData = sessions.remove(session) ?: return
-    Disposer.dispose(sessionData.disposable)
+    sessions.remove(session)
   }
 
   fun getSessionData(session: DebuggerSession): SessionThreadsData? = sessions[session]
 }
 
-private class SteppingStartListener : SteppingListener {
-  override fun beforeSteppingStarted(suspendContext: SuspendContextImpl, steppingAction: SteppingAction) {
-    PauseListener.getSessionData(suspendContext.debugProcess.session)?.setNonCancellableSection(suspendContext)
+private class ResumeListener : SteppingListener {
+  override fun beforeResume(suspendContext: SuspendContextImpl) {
+    val sessionData = PauseListener.getSessionData(suspendContext.debugProcess.session) ?: return
+    sessionData.resetNonCancellableSection(suspendContext)
   }
 }
 
@@ -64,7 +63,7 @@ private data class ThreadState(val reference: ObjectReference, var state: Boolea
 /**
  * Manages cancellability state of the IDE threads within a single debugger session.
  */
-private class SessionThreadsData(val disposable: Disposable) {
+private class SessionThreadsData() {
   private val threadStates = hashMapOf<ThreadReferenceProxyImpl, ThreadState?>()
   private var isIdeRuntime = false
 
@@ -74,11 +73,12 @@ private class SessionThreadsData(val disposable: Disposable) {
    */
   fun setNonCancellableSection(suspendContext: SuspendContextImpl) {
     try {
-      if (!isSteppingAdjustmentEnabled(suspendContext)) return
+      if (!isPCEAdjustmentEnabled(suspendContext)) return
       val state = getOrCreateThreadState(suspendContext) ?: return
       state.setNonCancellable(suspendContext, true)
     }
     catch (e: Exception) {
+      if (logIncorrectSuspendState(e)) return
       DebuggerUtilsImpl.logError(e)
     }
   }
@@ -88,7 +88,7 @@ private class SessionThreadsData(val disposable: Disposable) {
    */
   fun resetNonCancellableSection(suspendContext: SuspendContextImpl) {
     try {
-      if (!isSteppingAdjustmentEnabled(suspendContext)) return
+      if (!isPCEAdjustmentEnabled(suspendContext)) return
       val pausedThreads = suspendContext.debugProcess.suspendManager.pausedContexts
         .mapNotNull { it.thread }
         .mapNotNull { threadStates[it] }
@@ -97,6 +97,7 @@ private class SessionThreadsData(val disposable: Disposable) {
       }
     }
     catch (e: Exception) {
+      if (logIncorrectSuspendState(e)) return
       DebuggerUtilsImpl.logError(e)
     }
   }
@@ -114,7 +115,7 @@ private class SessionThreadsData(val disposable: Disposable) {
     return state.also { threadStates[thread] = it }
   }
 
-  private fun isSteppingAdjustmentEnabled(suspendContextImpl: SuspendContextImpl): Boolean {
+  private fun isPCEAdjustmentEnabled(suspendContextImpl: SuspendContextImpl): Boolean {
     if (!Registry.`is`("devkit.debugger.prevent.pce.while.stepping")) return false
     if (isIdeRuntime) return true
     val cancellationClasses = suspendContextImpl.virtualMachineProxy.classesByName(CANCELLATION_FQN).filter(ReferenceType::isPrepared)
@@ -127,10 +128,26 @@ private class SessionThreadsData(val disposable: Disposable) {
  * @see com.intellij.openapi.progress.Cancellation.isInNonCancelableSection
  */
 private fun initializeThreadState(suspendContext: SuspendContextImpl): ObjectReference? {
+  if (!suspendContext.debugProcess.isEvaluationPossible(suspendContext)) return null
   val evaluationContext = EvaluationContextImpl(suspendContext, suspendContext.frameProxy)
   val cancellationClass = findClassOrNull(evaluationContext, CANCELLATION_FQN) as? ClassType ?: return null
-  return DebuggerUtilsImpl.invokeClassMethod(evaluationContext, cancellationClass, "initThreadNonCancellableState",
-                                             "()Lcom/intellij/openapi/progress/Cancellation\$DebugNonCancellableState;") as? ObjectReference
+  val method = DebuggerUtilsImpl.findMethod(cancellationClass,
+                                            "initThreadNonCancellableState",
+                                            "()Lcom/intellij/openapi/progress/Cancellation\$DebugNonCancellableState;")
+               ?: run {
+                 logger<ResumeListener>().debug("Init method not found. Unsupported IJ platform version?")
+                 return null
+               }
+  try {
+    return evaluationContext.debugProcess.invokeMethod(evaluationContext, cancellationClass, method, emptyList()) as? ObjectReference
+  }
+  catch (e: EvaluateException) {
+    val targetException = e.exceptionFromTargetVM
+    if (targetException != null && DebuggerUtils.instanceOf(targetException.type(), "java.lang.StackOverflowError")) {
+      return null
+    }
+    throw e
+  }
 }
 
 private fun booleanValue(suspendContext: SuspendContextImpl, b: Boolean): BooleanValue = suspendContext.virtualMachineProxy.mirrorOf(b)

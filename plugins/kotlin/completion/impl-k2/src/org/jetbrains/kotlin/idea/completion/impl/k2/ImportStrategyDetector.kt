@@ -6,7 +6,7 @@ import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.kotlin.analysis.api.KaSession
 import org.jetbrains.kotlin.analysis.api.symbols.*
 import org.jetbrains.kotlin.idea.base.analysis.api.utils.getDefaultImports
-import org.jetbrains.kotlin.idea.base.utils.fqname.isImported
+import org.jetbrains.kotlin.idea.base.util.isImported
 import org.jetbrains.kotlin.idea.completion.lookups.ImportStrategy
 import org.jetbrains.kotlin.idea.completion.lookups.isExtensionCall
 import org.jetbrains.kotlin.name.FqName
@@ -27,8 +27,14 @@ class ImportStrategyDetector(originalKtFile: KtFile, project: Project) {
 
     context(KaSession)
     fun detectImportStrategyForCallableSymbol(symbol: KaCallableSymbol, isFunctionalVariableCall: Boolean = false): ImportStrategy {
-        val containingClassIsObject = (symbol.fakeOverrideOriginal.containingSymbol as? KaClassSymbol)?.classKind?.isObject == true
-        if (symbol.location == KaSymbolLocation.CLASS && !containingClassIsObject) return ImportStrategy.DoNothing
+        val hasStablePath = when ((symbol.fakeOverrideOriginal.containingSymbol as? KaClassSymbol)?.classKind) {
+            KaClassKind.ENUM_CLASS,
+            KaClassKind.OBJECT,
+            KaClassKind.COMPANION_OBJECT -> true
+
+            else -> false
+        }
+        if (symbol.location == KaSymbolLocation.CLASS && !hasStablePath) return ImportStrategy.DoNothing
 
         val callableId = symbol.callableId?.asSingleFqName() ?: return ImportStrategy.DoNothing
 

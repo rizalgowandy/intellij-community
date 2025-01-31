@@ -3,6 +3,7 @@ package com.intellij.util.indexing.contentQueue
 
 import com.intellij.openapi.application.readAction
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.diagnostic.ThrottledLogger
 import com.intellij.openapi.fileTypes.FileTypeRegistry
 import com.intellij.openapi.progress.Cancellation
 import com.intellij.openapi.progress.ProcessCanceledException
@@ -47,7 +48,6 @@ import java.util.concurrent.TimeUnit.NANOSECONDS
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
-import kotlin.Throws
 import kotlin.time.Duration.Companion.nanoseconds
 
 @ApiStatus.Internal
@@ -131,7 +131,7 @@ class IndexUpdateRunner(
       val filesIndexed = AtomicInteger(0)
       val progressReportingJob = launch {
         while (true) {
-          delay(200)
+          delay(50)
           val currentlyIndexedFile = currentlyIndexedFileRef.get()
           if (currentlyIndexedFile != null) {
             val presentableLocation = getPresentableLocationBeingIndexed(project, currentlyIndexedFile)
@@ -194,7 +194,7 @@ class IndexUpdateRunner(
                     processRequestTask(fileIndexingRequest)
                   }
 
-                ensureActive()
+                yield()
               }
             }
             //FIXME RC: for profiling, remove afterwards
@@ -399,6 +399,7 @@ class IndexUpdateRunner(
 
   companion object {
     internal val LOG = Logger.getInstance(IndexUpdateRunner::class.java)
+    internal val THROTTLED_LOG = ThrottledLogger(FileBasedIndexImpl.LOG, /*ignoreRepeatedLogsIn: */ 100 /*ms*/)
 
     private val VERBOSE_INDEXES: Scope = Scope(Indexes.name, Indexes.parent, verbose = true)
 
@@ -459,10 +460,10 @@ class IndexUpdateRunner(
           FileBasedIndexImpl.LOG.debug(fileUrl, e)
         }
         is IndexOutOfBoundsException, is InvalidVirtualFileAccessException, is IOException -> {
-          FileBasedIndexImpl.LOG.info(fileUrl, e)
+          THROTTLED_LOG.info(fileUrl, e)
         }
         else -> {
-          FileBasedIndexImpl.LOG.error(fileUrl, e)
+          THROTTLED_LOG.error(fileUrl, e)
         }
       }
     }

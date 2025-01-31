@@ -2,9 +2,7 @@
 module fleet.rhizomedb {
   requires fleet.util.core;
   requires kotlin.stdlib;
-  requires kotlin.reflect; // todo: get rid of reflection entirely
   requires kotlinx.collections.immutable.jvm;
-  requires it.unimi.dsi.fastutil;
   requires transitive kotlinx.serialization.core;
   requires kotlinx.serialization.json;
   requires org.jetbrains.annotations;

@@ -16,6 +16,7 @@ import com.intellij.openapi.options.Configurable;
 import com.intellij.openapi.options.ConfigurableGroup;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.DialogWrapper;
+import com.intellij.openapi.util.Disposer;
 import com.intellij.ui.IdeUICustomization;
 import com.intellij.ui.SearchTextField.FindAction;
 import com.intellij.ui.components.panels.NonOpaquePanel;
@@ -66,13 +67,11 @@ public class SettingsDialog extends DialogWrapper implements UiCompatibleDataPro
     init(configurable, null);
   }
 
-  public SettingsDialog(@NotNull Project project, @NotNull List<? extends ConfigurableGroup> groups, @Nullable Configurable configurable, @Nullable String filter) {
-    super(project, true);
-    dimensionServiceKey = DIMENSION_KEY;
-    editor = new SettingsEditor(myDisposable, project, groups, configurable, filter, this::treeViewFactory, this::spotlightPainterFactory);
-    isApplyButtonNeeded = true;
-    isResetButtonNeeded = false;
-    init(null, project);
+  public SettingsDialog(@NotNull Project project,
+                        @NotNull List<? extends ConfigurableGroup> groups,
+                        @Nullable Configurable configurable,
+                        @Nullable String filter) {
+    this(project, null, groups, configurable, filter);
   }
 
   public SettingsDialog(@NotNull Project project,
@@ -80,7 +79,7 @@ public class SettingsDialog extends DialogWrapper implements UiCompatibleDataPro
                         @NotNull List<? extends ConfigurableGroup> groups,
                         @Nullable Configurable configurable,
                         @Nullable String filter) {
-    super(project, parentComponent, true, IdeModalityType.IDE);
+    super(project, parentComponent, true, IdeModalityType.IDE, true, false);
     dimensionServiceKey = DIMENSION_KEY;
     editor = new SettingsEditor(myDisposable, project, groups, configurable, filter, this::treeViewFactory, this::spotlightPainterFactory);
     isApplyButtonNeeded = true;
@@ -88,7 +87,7 @@ public class SettingsDialog extends DialogWrapper implements UiCompatibleDataPro
     init(null, project);
   }
 
-  protected final AbstractEditor getEditor() {
+  public final AbstractEditor getEditor() {
     return editor;
   }
 
@@ -204,6 +203,10 @@ public class SettingsDialog extends DialogWrapper implements UiCompatibleDataPro
   @Override
   public void doOKAction() {
     applyAndClose(true);
+  }
+
+  public void addChildDisposable(@NotNull Disposable disposable) {
+    Disposer.register(myDisposable, disposable);
   }
 
   public void applyAndClose(boolean scheduleSave) {

@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.editor.impl;
 
 import com.intellij.ide.CutProvider;
@@ -18,9 +18,9 @@ import com.intellij.openapi.application.*;
 import com.intellij.openapi.command.CommandProcessor;
 import com.intellij.openapi.command.UndoConfirmationPolicy;
 import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.editor.*;
 import com.intellij.openapi.editor.Caret;
 import com.intellij.openapi.editor.Document;
-import com.intellij.openapi.editor.*;
 import com.intellij.openapi.editor.actionSystem.EditorActionManager;
 import com.intellij.openapi.editor.actions.CaretStop;
 import com.intellij.openapi.editor.actions.CaretStopPolicy;
@@ -62,7 +62,6 @@ import org.jetbrains.annotations.Nullable;
 
 import javax.accessibility.*;
 import javax.swing.*;
-import javax.swing.event.ChangeListener;
 import javax.swing.event.UndoableEditListener;
 import javax.swing.plaf.TextUI;
 import javax.swing.text.*;
@@ -161,16 +160,10 @@ public final class EditorComponentImpl extends JTextComponent implements Scrolla
   @Override
   public void uiDataSnapshot(@NotNull DataSink sink) {
     if (editor.isDisposed()) return;
-
-    sink.set(PlatformDataKeys.COPY_PROVIDER, editor.getCopyProvider());
-
     if (editor.isRendererMode()) return;
 
     sink.set(CommonDataKeys.EDITOR, editor);
     sink.set(CommonDataKeys.CARET, editor.getCaretModel().getCurrentCaret());
-    sink.set(PlatformDataKeys.DELETE_ELEMENT_PROVIDER, editor.getDeleteProvider());
-    sink.set(PlatformDataKeys.CUT_PROVIDER, editor.getCutProvider());
-    sink.set(PlatformDataKeys.PASTE_PROVIDER, editor.getPasteProvider());
 
     LogicalPosition location = editor.myLastMousePressedLocation;
     if (location == null) {
@@ -634,7 +627,7 @@ public final class EditorComponentImpl extends JTextComponent implements Scrolla
 
   private void setupJTextComponentContext() {
     setDocument(new EditorAccessibilityDocument());
-    setCaret(new EditorAccessibilityCaret());
+    setCaret(new EditorAccessibilityCaret(editor));
   }
 
   /**
@@ -1015,90 +1008,6 @@ public final class EditorComponentImpl extends JTextComponent implements Scrolla
         }
       }), "", document, UndoConfirmationPolicy.DEFAULT, document);
     });
-  }
-
-  /** {@linkplain DefaultCaret} does a lot of work we don't want (listening
-   * for focus events etc). This exists simply to be able to send caret events to the screen reader. */
-  private final class EditorAccessibilityCaret implements javax.swing.text.Caret {
-    @Override
-    public void install(JTextComponent jTextComponent) {
-    }
-
-    @Override
-    public void deinstall(JTextComponent jTextComponent) {
-    }
-
-    @Override
-    public void paint(Graphics graphics) {
-    }
-
-    @Override
-    public void addChangeListener(ChangeListener changeListener) {
-    }
-
-    @Override
-    public void removeChangeListener(ChangeListener changeListener) {
-    }
-
-    @Override
-    public boolean isVisible() {
-      return true;
-    }
-
-    @Override
-    public void setVisible(boolean visible) {
-    }
-
-    @Override
-    public boolean isSelectionVisible() {
-      return true;
-    }
-
-    @Override
-    public void setSelectionVisible(boolean visible) {
-    }
-
-    @Override
-    public void setMagicCaretPosition(Point point) {
-    }
-
-    @Override
-    public @Nullable Point getMagicCaretPosition() {
-      return null;
-    }
-
-    @Override
-    public void setBlinkRate(int rate) {
-    }
-
-    @Override
-    public int getBlinkRate() {
-      return 250;
-    }
-
-    @Override
-    public int getDot() {
-      return editor.getCaretModel().getOffset();
-    }
-
-    @Override
-    public int getMark() {
-      return editor.getSelectionModel().getSelectionStart();
-    }
-
-    @Override
-    public void setDot(int offset) {
-      if (!editor.isDisposed()) {
-        editor.getCaretModel().moveToOffset(offset);
-      }
-    }
-
-    @Override
-    public void moveDot(int offset) {
-      if (!editor.isDisposed()) {
-        editor.getCaretModel().moveToOffset(offset);
-      }
-    }
   }
 
   @Override

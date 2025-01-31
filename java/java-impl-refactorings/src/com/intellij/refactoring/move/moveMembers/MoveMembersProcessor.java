@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.refactoring.move.moveMembers;
 
 import com.intellij.ide.util.EditorHelper;
@@ -69,9 +69,7 @@ public class MoveMembersProcessor extends BaseRefactoringProcessor {
   }
 
   @Override
-  @NotNull
-  @Command
-  protected String getCommandName() {
+  protected @NotNull @Command String getCommandName() {
     return myCommandName;
   }
 
@@ -111,13 +109,12 @@ public class MoveMembersProcessor extends BaseRefactoringProcessor {
   }
 
   @Override
-  @NotNull
-  protected UsageViewDescriptor createUsageViewDescriptor(UsageInfo @NotNull [] usages) {
+  protected @NotNull UsageViewDescriptor createUsageViewDescriptor(UsageInfo @NotNull [] usages) {
     return new MoveMemberViewDescriptor(PsiUtilCore.toPsiElementArray(myMembersToMove));
   }
 
   @Override
-  protected UsageInfo @NotNull [] findUsages() {
+  public UsageInfo @NotNull [] findUsages() {
     final String targetClassName = myOptions.getTargetClassName();
     myTargetClass = JavaPsiFacade.getInstance(myProject).findClass(targetClassName, GlobalSearchScope.projectScope(myProject));
     LOG.assertTrue(myTargetClass != null, "target class: " + targetClassName);

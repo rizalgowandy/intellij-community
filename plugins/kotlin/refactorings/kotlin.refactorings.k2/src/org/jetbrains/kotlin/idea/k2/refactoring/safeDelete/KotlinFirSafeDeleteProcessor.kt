@@ -5,7 +5,6 @@ import com.intellij.openapi.actionSystem.ex.ActionUtil
 import com.intellij.openapi.module.Module
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
-import com.intellij.openapi.util.Key
 import com.intellij.psi.ElementDescriptionUtil
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiMember
@@ -21,7 +20,6 @@ import com.intellij.refactoring.util.RefactoringDescriptionLocation
 import com.intellij.usageView.UsageInfo
 import com.intellij.util.Processor
 import com.intellij.util.containers.map2Array
-import org.jetbrains.annotations.TestOnly
 import org.jetbrains.kotlin.analysis.api.analyze
 import org.jetbrains.kotlin.analysis.api.symbols.KaCallableSymbol
 import org.jetbrains.kotlin.analysis.api.symbols.KaClassSymbol
@@ -31,6 +29,7 @@ import org.jetbrains.kotlin.asJava.elements.KtLightMethod
 import org.jetbrains.kotlin.asJava.toLightMethods
 import org.jetbrains.kotlin.asJava.unwrapped
 import org.jetbrains.kotlin.idea.base.analysis.api.utils.analyzeInModalWindow
+import org.jetbrains.kotlin.idea.base.projectStructure.getKaModule
 import org.jetbrains.kotlin.idea.base.resources.KotlinBundle
 import org.jetbrains.kotlin.idea.k2.refactoring.KotlinFirRefactoringsSettings
 import org.jetbrains.kotlin.idea.k2.refactoring.KotlinK2RefactoringsBundle
@@ -73,7 +72,7 @@ class KotlinFirSafeDeleteProcessor : SafeDeleteProcessorDelegateBase() {
         if (element is KtDeclaration) {
             val additionalElementsToDeleteArray = additionalElementsToDelete.toTypedArray()
             //group declarations into expected to receive conflicts once per expected/actuals group
-            val expected = ExpectActualUtils.liftToExpected(element) ?: element
+            val expected = ExpectActualUtils.liftToExpect(element) ?: element
             ReferencesSearch.search(element).forEach(Processor {
                 val e = it.element
                 if (!isInside(e) && !isInside(e, additionalElementsToDeleteArray)) {
@@ -126,33 +125,31 @@ class KotlinFirSafeDeleteProcessor : SafeDeleteProcessorDelegateBase() {
         val overridden = arrayListOf<PsiElement>()
         val containingClass = element.containingClass()
         if (containingClass != null) {
-            analyze(containingClass) {
-                val elementClassSymbol = containingClass.symbol as KaClassSymbol
+            overridden.add(element)
+            element.findAllOverridings().forEach { m ->
+                val original = m.unwrapped
+                if (original != null && !allElementsToDelete.contains(original)) {
+                    analyze(original.getKaModule(original.project, useSiteModule = null)) {
+                        val elementClassSymbol = containingClass.symbol as KaClassSymbol
 
-                fun isMultipleInheritance(function: KaSymbol): Boolean {
-                    val superMethods = (function as? KaCallableSymbol)?.directlyOverriddenSymbols ?: return false
-                    return superMethods.any {
-                        val superClassSymbol = it.containingDeclaration as? KaClassSymbol ?: return@any false
-                        val superMethod = it.psi ?: return@any false
-                        return@any !isInside(superMethod) && !superClassSymbol.isSubClassOf(elementClassSymbol)
-                    }
-                }
+                        fun isMultipleInheritance(function: KaSymbol): Boolean {
+                            val superMethods = (function as? KaCallableSymbol)?.directlyOverriddenSymbols ?: return false
+                            return superMethods.any {
+                                val superClassSymbol = it.containingDeclaration as? KaClassSymbol ?: return@any false
+                                val superMethod = it.psi ?: return@any false
+                                return@any !isInside(superMethod) && !superClassSymbol.isSubClassOf(elementClassSymbol)
+                            }
+                        }
 
-                overridden.add(element)
-                element.findAllOverridings().forEach { m ->
-                    val original = m.unwrapped
-                    if (original != null && !allElementsToDelete.contains(original)) {
                         val oSymbol = when (original) {
                             is KtDeclaration -> original.symbol
                             is PsiMember -> original.callableSymbol
                             else -> null
                         }
 
-                        if (oSymbol != null && isMultipleInheritance(oSymbol)) {
-                            return@forEach
+                        if (oSymbol == null || !isMultipleInheritance(oSymbol)) {
+                            overridden.add(original)
                         }
-
-                        overridden.add(original)
                     }
                 }
             }

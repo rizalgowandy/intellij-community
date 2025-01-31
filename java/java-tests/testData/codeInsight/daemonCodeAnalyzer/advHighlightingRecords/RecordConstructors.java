@@ -7,7 +7,7 @@ record Generic(String x) {
   public <T> Generic() {this("");}
 }
 record Throws() {
-  public Throws() <error descr="'throws' not allowed on canonical constructor">throws</error> Throwable {}
+  public Throws() <error descr="Canonical constructor should not declare 'throws' clause">throws</error> Throwable {}
   public Throws(int x) throws Throwable { this(); }
 }
 record TypeMismatch<T>(T t) {
@@ -78,5 +78,18 @@ record DelegateInitializesField(int n) {
   DelegateInitializesField(boolean b) {
     this(b ? 1 : 0);
     System.out.println(n);
+  }
+}
+record BrokenRecord(int x, int y) {
+  BrokenRecord(int x, int y) {
+    this.x = x;
+    this.y = y;
+            <error descr="Unexpected token">.</error>
+  }
+}
+class NonRecord {
+  final int a;
+  <error descr="Parameter list expected">NonRecord</error> {
+    a = 10;
   }
 }

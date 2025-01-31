@@ -169,6 +169,10 @@ class KotlinUnusedImportInspection : AbstractKotlinInspection() {
 
         override fun getFamilyName() = name
 
+        override fun startInWriteAction(): Boolean {
+            return false
+        }
+
         override fun invoke(project: Project, file: PsiFile, startElement: PsiElement, endElement: PsiElement) {
             SideEffectGuard.checkSideEffectAllowed(SideEffectGuard.EffectType.SETTINGS)
             KotlinCodeInsightWorkspaceSettings.getInstance(project).optimizeImportsOnTheFly = true

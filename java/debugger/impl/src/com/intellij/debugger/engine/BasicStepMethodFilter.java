@@ -24,12 +24,9 @@ public class BasicStepMethodFilter implements NamedMethodFilter {
   private static final Logger LOG = Logger.getInstance(BasicStepMethodFilter.class);
   private static final String PROXY_CALL_SIGNATURE_POSTFIX = "Ljava/lang/Object;Ljava/lang/reflect/Method;[Ljava/lang/Object;)Ljava/lang/Object;";
 
-  @NotNull
-  protected final JVMName myDeclaringClassName;
-  @NotNull
-  private final String myTargetMethodName;
-  @Nullable
-  protected final JVMName myTargetMethodSignature;
+  protected final @NotNull JVMName myDeclaringClassName;
+  private final @NotNull String myTargetMethodName;
+  protected final @Nullable JVMName myTargetMethodSignature;
   private final Range<Integer> myCallingExpressionLines;
   private final int myOrdinal;
   private final boolean myCheckCaller;
@@ -67,8 +64,7 @@ public class BasicStepMethodFilter implements NamedMethodFilter {
   }
 
   @Override
-  @NotNull
-  public String getMethodName() {
+  public @NotNull String getMethodName() {
     return myTargetMethodName;
   }
 
@@ -110,7 +106,7 @@ public class BasicStepMethodFilter implements NamedMethodFilter {
     if (!res && !method.isStatic() && stackFrame != null) {
       ObjectReference thisObject = stackFrame.thisObject();
       if (thisObject != null) {
-        res = DebuggerUtils.instanceOf(thisObject.referenceType(), (declaringClassNameName));
+        res = DebuggerUtils.instanceOf(thisObject.referenceType(), declaringClassNameName);
       }
     }
     return res;
@@ -225,9 +221,8 @@ public class BasicStepMethodFilter implements NamedMethodFilter {
     return false;
   }
 
-  @Nullable
   @Override
-  public Range<Integer> getCallingExpressionLines() {
+  public @Nullable Range<Integer> getCallingExpressionLines() {
     return myCallingExpressionLines;
   }
 

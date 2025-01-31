@@ -27,8 +27,10 @@ import com.intellij.openapi.editor.markup.EffectType
 import com.intellij.openapi.editor.markup.TextAttributes
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.util.Key
 import com.intellij.terminal.JBTerminalSystemSettingsProviderBase
 import com.intellij.terminal.TerminalColorPalette
+import com.intellij.ui.components.JBLayeredPane
 import com.intellij.ui.scale.JBUIScale
 import com.intellij.util.Alarm
 import com.intellij.util.DocumentUtil
@@ -36,13 +38,13 @@ import com.intellij.util.asSafely
 import com.intellij.util.concurrency.ThreadingAssertions
 import com.intellij.util.concurrency.annotations.RequiresBlockingContext
 import com.intellij.util.concurrency.annotations.RequiresEdt
-import com.intellij.util.containers.nullize
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import com.jediterm.core.util.TermSize
 import com.jediterm.terminal.TerminalColor
 import com.jediterm.terminal.TextStyle
 import com.jediterm.terminal.model.CharBuffer
+import com.jediterm.terminal.model.TerminalLine
 import com.jediterm.terminal.ui.AwtTransformers
 import com.jediterm.terminal.util.CharUtils
 import org.intellij.lang.annotations.MagicConstant
@@ -60,12 +62,21 @@ import java.awt.event.KeyEvent
 import java.awt.font.FontRenderContext
 import java.awt.geom.Dimension2D
 import java.util.concurrent.CompletableFuture
+import javax.swing.JComponent
+import javax.swing.JScrollBar
 import javax.swing.JScrollPane
 import javax.swing.KeyStroke
+import javax.swing.event.ChangeEvent
+import javax.swing.event.ChangeListener
 import kotlin.math.max
 
 internal object TerminalUiUtils {
-  fun createOutputEditor(document: Document, project: Project, settings: JBTerminalSystemSettingsProviderBase): EditorImpl {
+  fun createOutputEditor(
+    document: Document,
+    project: Project,
+    settings: JBTerminalSystemSettingsProviderBase,
+    installContextMenu: Boolean,
+  ): EditorImpl {
     val editor = EditorFactory.getInstance().createEditor(document, project, EditorKind.CONSOLE) as EditorImpl
     editor.isScrollToCaret = false
     editor.isRendererMode = true
@@ -92,9 +103,12 @@ internal object TerminalUiUtils {
       isAdditionalPageAtBottom = false
       isBlockCursor = true
       isWhitespacesShown = false
+      characterGridWidth = editor.getCharSize().width.toFloat()
     }
 
-    installPopupMenu(editor)
+    if (installContextMenu) {
+      installPopupMenu(editor)
+    }
     return editor
   }
 
@@ -113,12 +127,14 @@ internal object TerminalUiUtils {
   }
 
   private fun concatGroups(vararg groups: ActionGroup?): ActionGroup {
-    val actionsPerGroup = groups.mapNotNull {
-      it?.getChildren(null).orEmpty().toList().nullize()
+    val separatedGroups = groups.filterNotNull().flatMapIndexed { index, group ->
+      if (index == 0) listOf(group) else listOf(Separator.create(), group)
     }
-    return DefaultActionGroup(actionsPerGroup.flatMapIndexed { index, actions ->
-      if (index > 0) listOf(Separator.create()) + actions else actions
-    })
+    // 1. Leading, trailing and duplicated separators are eliminated automatically (ActionUpdater.removeUnnecessarySeparators).
+    //    This can be the case when a group has no visible actions.
+    // 2. Whether a group's children are injected into the parent group or are shown as a submenu is controlled
+    //    by `ActionGroup.isPopup`.
+    return DefaultActionGroup(separatedGroups)
   }
 
   fun createSingleShortcutSet(@MagicConstant(flagsFromClass = KeyEvent::class) keyCode: Int,
@@ -263,8 +279,21 @@ internal fun Editor.getCharSize(): Dimension2D {
                                   AntialiasingType.getKeyForCurrentScope(true),
                                   UISettings.editorFractionalMetricsHint)
   val fontMetrics = FontInfo.getFontMetrics(colorsScheme.getFont(EditorFontType.PLAIN), context)
-  val width = FontLayoutService.getInstance().charWidth2D(fontMetrics, ' '.code)
+  // Using the '%' to calculate the size as it's usually one of the widest non-double-width characters.
+  // For monospaced fonts this shouldn't really matter, but let's stay on the safe side.
+  // Otherwise, we may end up with some characters falsely displayed as double-width ones.
+  val width = FontLayoutService.getInstance().charWidth2D(fontMetrics, '%'.code)
   return Dimension2DDouble(width.toDouble(), lineHeight.toDouble())
+}
+
+fun Editor.calculateTerminalSize(): TermSize? {
+  val contentSize = scrollingModel.visibleArea.size
+  val charSize = getCharSize()
+
+  return if (contentSize.width > 0 && contentSize.height > 0) {
+    TerminalUiUtils.calculateTerminalSize(contentSize, charSize)
+  }
+  else null
 }
 
 private class Dimension2DDouble(private var width: Double, private var height: Double) : Dimension2D() {
@@ -314,8 +343,111 @@ internal inline fun <reified T> Document.executeInBulk(crossinline block: () -> 
   return result!!
 }
 
+private val TERMINAL_OUTPUT_SCROLL_CHANGING_ACTION_KEY = Key.create<Unit>("TERMINAL_EDITOR_SIZE_CHANGING_ACTION")
+
+/**
+ * Indicates that action that may modify scroll offset or editor size is in progress.
+ * It should be used only to indicate internal programmatic actions that are not explicitly caused by the user interaction.
+ * For example, terminal output text update, or adding inlays to create insets between command blocks.
+ */
+internal var Editor.isTerminalOutputScrollChangingActionInProgress: Boolean
+  get() = getUserData(TERMINAL_OUTPUT_SCROLL_CHANGING_ACTION_KEY) != null
+  set(value) = putUserData(TERMINAL_OUTPUT_SCROLL_CHANGING_ACTION_KEY, if (value) Unit else null)
+
+internal inline fun <T> Editor.doTerminalOutputScrollChangingAction(action: () -> T): T {
+  isTerminalOutputScrollChangingActionInProgress = true
+  try {
+    return action()
+  }
+  finally {
+    isTerminalOutputScrollChangingActionInProgress = false
+  }
+}
+
+/**
+ * Scroll to bottom if we were at the bottom before executing the [action]
+ */
+@RequiresEdt
+internal inline fun <T> Editor.doWithScrollingAware(action: () -> T): T {
+  val wasAtBottom = scrollingModel.visibleArea.let { it.y + it.height } == contentComponent.height
+  try {
+    return action()
+  }
+  finally {
+    if (wasAtBottom) {
+      scrollToBottom()
+    }
+  }
+}
+
+@RequiresEdt
+internal inline fun <T> Editor.doWithoutScrollingAnimation(action: () -> T): T {
+  scrollingModel.disableAnimation()
+  return try {
+    action()
+  }
+  finally {
+    scrollingModel.enableAnimation()
+  }
+}
+
+@RequiresEdt
+internal fun Editor.scrollToBottom() {
+  // disable animation to perform scrolling atomically
+  doWithoutScrollingAnimation {
+    val visibleArea = scrollingModel.visibleArea
+    scrollingModel.scrollVertically(contentComponent.height - visibleArea.height)
+  }
+}
+
+internal fun stickScrollBarToBottom(verticalScrollBar: JScrollBar) {
+  verticalScrollBar.model.addChangeListener(object : ChangeListener {
+    var preventRecursion: Boolean = false
+    var prevValue: Int = 0
+    var prevMaximum: Int = 0
+    var prevExtent: Int = 0
+
+    override fun stateChanged(e: ChangeEvent?) {
+      if (preventRecursion) return
+
+      val model = verticalScrollBar.model
+      val maximum = model.maximum
+      val extent = model.extent
+
+      if (extent != prevExtent || maximum != prevMaximum) {
+        // stay at the bottom if the previous position was at the bottom
+        if (prevValue == prevMaximum - prevExtent) {
+          preventRecursion = true
+          try {
+            model.value = maximum - extent
+          }
+          finally {
+            preventRecursion = false
+          }
+        }
+      }
+
+      prevValue = model.value
+      prevMaximum = model.maximum
+      prevExtent = model.extent
+    }
+  })
+}
+
 /** @return the string without second part of double width character if any */
 internal fun CharBuffer.normalize(): String {
   val s = this.toString()
   return if (s.contains(CharUtils.DWC)) s.filterTo(StringBuilder(s.length - 1)) { it != CharUtils.DWC }.toString() else s
+}
+
+internal fun TerminalLine.getLengthWithoutDwc(): Int {
+  val dwcCount = entries.fold(0) { curCount, entry ->
+    val dwcInEntryCount = entry.text.count { it == CharUtils.DWC }
+    curCount + dwcInEntryCount
+  }
+  return length() - dwcCount
+}
+
+internal fun JBLayeredPane.addToLayer(component: JComponent, layer: Int) {
+  add(component, layer as Any) // Any is needed to resolve to the correct overload.
 }

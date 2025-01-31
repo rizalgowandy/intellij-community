@@ -1,24 +1,21 @@
 package com.intellij.notebooks.visualization.outputs.impl
 
+import com.intellij.notebooks.ui.visualization.NotebookUtil.notebookAppearance
+import com.intellij.notebooks.visualization.r.inlays.ResizeController
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.editor.colors.EditorColors
-import com.intellij.openapi.editor.ex.EditorEx
 import com.intellij.openapi.editor.ex.util.EditorUtil
 import com.intellij.openapi.editor.impl.EditorImpl
 import com.intellij.openapi.util.NlsSafe
 import com.intellij.ui.IdeBorderFactory
 import com.intellij.util.ui.JBUI
-import com.intellij.util.ui.UIUtil
-import com.intellij.notebooks.ui.visualization.notebookAppearance
-import com.intellij.notebooks.visualization.outputs.hoveredCollapsingComponentRect
-import com.intellij.notebooks.visualization.r.inlays.ResizeController
 import java.awt.Cursor
 import java.awt.Dimension
 import java.awt.Font
-import java.awt.Graphics
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
+import java.lang.Integer.max
 import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPanel
@@ -37,6 +34,7 @@ open class CollapsingComponent(
         customHeight = height - insets.run { top + bottom }
       }
       customHeight += dy
+      customHeight = max(customHeight, editor.lineHeight) // We will not allow resizing component below editor line height, because it impossible to resize it back.
       setSize(width, customHeight)
       mainComponent.revalidate()
     }.apply {
@@ -47,7 +45,7 @@ open class CollapsingComponent(
     }
   }
 
-  val mainComponent = child
+  val mainComponent: JComponent = child
 
   private val stubComponent = lazy {
     val result = StubComponent(editor)
@@ -78,8 +76,6 @@ open class CollapsingComponent(
         stubComponent.value.text = collapsedTextSupplier()
       }
     }
-
-  val isWorthCollapsing: Boolean get() = !isSeen || mainComponent.height >= MIN_HEIGHT_TO_COLLAPSE
 
   val hasBeenManuallyResized: Boolean get() = customHeight != -1
 
@@ -126,40 +122,6 @@ open class CollapsingComponent(
     }
   }
 
-  fun paintGutter(editor: EditorEx, yOffset: Int, g: Graphics) {
-    val notebookAppearance = editor.notebookAppearance
-    val backgroundColor = notebookAppearance.getCodeCellBackground(editor.colorsScheme)
-    if (backgroundColor != null && isWorthCollapsing) {
-      val x = collapseRectHorizontalLeft(editor)
-
-      val (rectTop, rectHeight) = insets.let {
-        yOffset + y + it.top to height - it.top - it.bottom
-      }
-
-      g.color = backgroundColor
-      if (editor.gutterComponentEx.hoveredCollapsingComponentRect === this) {
-        g.fillRect(x, rectTop, COLLAPSING_RECT_WIDTH, rectHeight)
-      }
-
-      if (!isSeen) {
-        val outputAdjacentRectWidth = notebookAppearance.getLeftBorderWidth()
-        g.color = editor.notebookAppearance.getTextOutputBackground(editor.colorsScheme)
-        g.fillRect(
-          editor.gutterComponentEx.width - outputAdjacentRectWidth,
-          rectTop,
-          outputAdjacentRectWidth,
-          rectHeight,
-        )
-      }
-
-      val icon = if (isSeen) UIUtil.getTreeExpandedIcon() else UIUtil.getTreeCollapsedIcon()
-      val iconOffset = (COLLAPSING_RECT_WIDTH - icon.iconWidth) / 2
-
-      // +1 -- just because the icons are not centered.
-      icon.paintIcon(this, g, x + iconOffset + 1, yOffset + y + COLLAPSING_RECT_MARGIN_Y_BOTTOM + iconOffset)
-    }
-  }
-
   fun updateStubIfCollapsed() {
     if (!isSeen) {
       stubComponent.value.text = collapsedTextSupplier()
@@ -203,18 +165,5 @@ open class CollapsingComponent(
       background = editor.notebookAppearance.getTextOutputBackground(editor.colorsScheme)
       font = EditorUtil.fontForChar(text.first(), fontType, editor).font
     }
-  }
-
-  companion object {
-    const val MIN_HEIGHT_TO_COLLAPSE = 50
-    const val COLLAPSING_RECT_WIDTH = 22
-    private const val COLLAPSING_RECT_MARGIN_Y_BOTTOM = 5
-
-    @JvmStatic
-    fun collapseRectHorizontalLeft(editor: EditorEx): Int =
-      (editor.gutterComponentEx.width
-       - COLLAPSING_RECT_WIDTH
-       - editor.notebookAppearance.LINE_NUMBERS_MARGIN
-       - editor.notebookAppearance.CODE_CELL_LEFT_LINE_PADDING)
   }
 }

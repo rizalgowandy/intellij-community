@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.platform.debugger.impl.frontend.evaluate.quick
 
 import com.intellij.openapi.diagnostic.Logger
@@ -12,7 +12,6 @@ import com.intellij.platform.debugger.impl.frontend.evaluate.quick.common.Remote
 import com.intellij.frontend.FrontendApplicationInfo
 import com.intellij.frontend.FrontendType
 import com.intellij.platform.debugger.impl.frontend.FrontendXDebuggerManager
-import com.intellij.platform.kernel.withKernel
 import com.intellij.platform.project.projectId
 import com.intellij.xdebugger.XDebuggerManager
 import com.intellij.xdebugger.evaluation.XDebuggerEditorsProvider
@@ -32,10 +31,6 @@ private val LOG = Logger.getInstance(XQuickEvaluateHandler::class.java)
 
 internal class XQuickEvaluateHandler : QuickEvaluateHandler() {
   override fun isEnabled(project: Project): Boolean {
-    val frontendType = FrontendApplicationInfo.getFrontendType()
-    if (frontendType is FrontendType.RemoteDev && !frontendType.isLuxSupported) {
-      return false
-    }
     val currentSession = FrontendXDebuggerManager.getInstance(project).currentSession.value
     return currentSession != null && currentSession.evaluator.value != null
   }
@@ -52,10 +47,8 @@ internal class XQuickEvaluateHandler : QuickEvaluateHandler() {
     val projectId = project.projectId()
     val editorId = editor.editorId()
     val expressionInfoDeferred = documentCoroutineScope.async(Dispatchers.IO) {
-      withKernel {
-        val remoteApi = XDebuggerValueLookupHintsRemoteApi.getInstance()
-        remoteApi.getExpressionInfo(projectId, editorId, offset, type)
-      }
+      val remoteApi = XDebuggerValueLookupHintsRemoteApi.getInstance()
+      remoteApi.getExpressionInfo(projectId, editorId, offset, type)
     }
     val hintDeferred: Deferred<AbstractValueHint?> = documentCoroutineScope.async(Dispatchers.IO) {
       val expressionInfo = expressionInfoDeferred.await()
@@ -68,18 +61,16 @@ internal class XQuickEvaluateHandler : QuickEvaluateHandler() {
         LOG.error("invalid range: $range, text length = $textLength")
         return@async null
       }
-      if (Registry.`is`("debugger.valueLookupFrontendBackend")) {
-        val frontendEvaluator = FrontendXDebuggerManager.getInstance(project).currentSession.value?.evaluator?.value ?: return@async null
-        // TODO[IJPL-160146]: provide proper editorsProvider
-        val editorsProvider = object : XDebuggerEditorsProvider() {
-          override fun getFileType(): FileType {
-            return FileTypes.PLAIN_TEXT
-          }
-        }
-        // TODO[IJPL-160146]: support passing session: basically valueMarkers and currentPosition
-        XValueHint(project, editorsProvider, editor, point, type, expressionInfo, frontendEvaluator, false)
+      val frontendType = FrontendApplicationInfo.getFrontendType()
+      if (Registry.`is`("debugger.valueLookupFrontendBackend") || (frontendType is FrontendType.RemoteDev && !frontendType.isLuxSupported)) {
+        val currentSession = FrontendXDebuggerManager.getInstance(project).currentSession.value ?: return@async null
+        val frontendEvaluator = currentSession.evaluator.value ?: return@async null
+        val valueMarkers = currentSession.valueMarkers
+        val editorsProvider = currentSession.editorsProvider
+        // TODO[IJPL-160146]: support passing currentPosition
+        XValueHint(project, editorsProvider, editor, point, type, offset, expressionInfo, frontendEvaluator, valueMarkers, null, false)
       }
-      else if (FrontendApplicationInfo.getFrontendType() is FrontendType.RemoteDev) {
+      else if (frontendType is FrontendType.RemoteDev) {
         RemoteValueHint(project, projectId, editor, point, type, offset, expressionInfo, fromPlugins = false)
       }
       else {
@@ -91,7 +82,7 @@ internal class XQuickEvaluateHandler : QuickEvaluateHandler() {
         if (evaluator == null) {
           return@async null
         }
-        XValueHint(project, editor, point, type, expressionInfo, evaluator, session, false)
+        XValueHint(project, editor, point, type, offset, expressionInfo, evaluator, session, false)
       }
     }
     hintDeferred.invokeOnCompletion {

@@ -17,7 +17,10 @@ import com.intellij.ide.plugins.PluginSet
 import com.intellij.ide.plugins.marketplace.statistics.PluginManagerUsageCollector
 import com.intellij.ide.plugins.marketplace.statistics.enums.DialogAcceptanceResultEnum
 import com.intellij.ide.plugins.saveBundledPluginsState
-import com.intellij.ide.ui.*
+import com.intellij.ide.ui.IconMapLoader
+import com.intellij.ide.ui.LafManager
+import com.intellij.ide.ui.NotRoamableUiSettings
+import com.intellij.ide.ui.UISettings
 import com.intellij.ide.ui.customization.CustomActionsSchema
 import com.intellij.ide.ui.html.initGlobalStyleSheet
 import com.intellij.ide.ui.laf.LafManagerImpl
@@ -427,6 +430,9 @@ suspend fun initConfigurationStore(app: ApplicationImpl, args: List<String>) {
     span("init app store") {
       // we set it after beforeApplicationLoaded call, because the app store can depend on a stream provider state
       app._getComponentStore().setPath(configDir)
+      if (!LoadingState.CONFIGURATION_STORE_INITIALIZED.isOccurred) {
+        LoadingState.setCurrentState(LoadingState.CONFIGURATION_STORE_INITIALIZED)
+      }
     }
   }
 }

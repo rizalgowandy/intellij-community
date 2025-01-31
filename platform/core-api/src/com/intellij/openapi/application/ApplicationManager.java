@@ -16,8 +16,7 @@ import java.util.function.Supplier;
  * Provides access to the {@link Application}.
  */
 public class ApplicationManager {
-  @ApiStatus.Internal
-  protected static Application ourApplication;
+  @ApiStatus.Internal protected static volatile Application ourApplication;
 
   public static Application getApplication() {
     return ourApplication;

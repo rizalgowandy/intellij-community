@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.jetbrains.python.sdk.add.v2
 
 import com.intellij.openapi.application.ApplicationManager
@@ -20,18 +20,23 @@ import com.intellij.ui.dsl.builder.AlignX
 import com.intellij.ui.dsl.builder.Panel
 import com.intellij.ui.dsl.builder.TopGap
 import com.intellij.ui.dsl.builder.bindText
+import com.intellij.util.concurrency.annotations.RequiresEdt
 import com.intellij.util.ui.showingScope
 import com.jetbrains.python.PyBundle.message
+import com.jetbrains.python.Result
+import com.jetbrains.python.getOrThrow
 import com.jetbrains.python.newProject.collector.InterpreterStatisticsInfo
 import com.jetbrains.python.newProjectWizard.projectPath.ProjectPathFlows
 import com.jetbrains.python.sdk.ModuleOrProject
-import com.jetbrains.python.sdk.VirtualEnvReader
+import com.jetbrains.python.venvReader.VirtualEnvReader
 import com.jetbrains.python.sdk.add.v2.PythonInterpreterSelectionMode.*
 import com.jetbrains.python.statistics.InterpreterCreationMode
 import com.jetbrains.python.statistics.InterpreterTarget
 import com.jetbrains.python.statistics.InterpreterType
-import com.jetbrains.python.util.ErrorSink
+import com.jetbrains.python.errorProcessing.ErrorSink
+import com.jetbrains.python.errorProcessing.PyError
 import com.jetbrains.python.util.ShowingMessageErrorSync
+import com.jetbrains.python.errorProcessing.asPythonResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -39,11 +44,10 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-
 /**
  * If `onlyAllowedInterpreterTypes` then only these types are displayed. All types displayed otherwise
  */
-class PythonAddNewEnvironmentPanel(val projectPathFlows: ProjectPathFlows, onlyAllowedInterpreterTypes: Set<PythonInterpreterSelectionMode>? = null, private val errorSink: ErrorSink) : PySdkCreator {
+internal class PythonAddNewEnvironmentPanel(val projectPathFlows: ProjectPathFlows, onlyAllowedInterpreterTypes: Set<PythonInterpreterSelectionMode>? = null, private val errorSink: ErrorSink) : PySdkCreator {
   private val propertyGraph = PropertyGraph()
   private val allowedInterpreterTypes = (onlyAllowedInterpreterTypes ?: PythonInterpreterSelectionMode.entries).also {
     assert(it.isNotEmpty()) {
@@ -158,24 +162,26 @@ class PythonAddNewEnvironmentPanel(val projectPathFlows: ProjectPathFlows, onlyA
     }
     else {
       runBlockingCancellable { getSdk(moduleOrProject) }
-    }.getOrThrow()
+    }.getOrThrow().first
   }
 
-  override suspend fun getSdk(moduleOrProject: ModuleOrProject): Result<Sdk> {
+  override suspend fun getSdk(moduleOrProject: ModuleOrProject): com.jetbrains.python.Result<Pair<Sdk, InterpreterStatisticsInfo>, PyError> {
     model.navigator.saveLastState()
-    return when (selectedMode.get()) {
+    val sdk = when (selectedMode.get()) {
       PROJECT_VENV -> {
         val projectPath = projectPathFlows.projectPathWithDefault.first()
         // todo just keep venv path, all the rest is in the model
         model.setupVirtualenv(projectPath.resolve(VirtualEnvReader.DEFAULT_VIRTUALENV_DIRNAME), projectPath)
       }
-      BASE_CONDA -> model.selectCondaEnvironment(base = true)
+      BASE_CONDA -> model.selectCondaEnvironment(base = true).asPythonResult()
       CUSTOM -> custom.currentSdkManager.getOrCreateSdk(moduleOrProject)
-    }
+    }.getOr { return it }
+    val statistics = withContext(Dispatchers.EDT) { createStatisticsInfo() }
+    return Result.success(Pair(sdk, statistics))
   }
 
-
-  override fun createStatisticsInfo(): InterpreterStatisticsInfo = when (selectedMode.get()) {
+  @RequiresEdt
+  fun createStatisticsInfo(): InterpreterStatisticsInfo = when (selectedMode.get()) {
     PROJECT_VENV -> InterpreterStatisticsInfo(InterpreterType.VIRTUALENV,
                                               InterpreterTarget.LOCAL,
                                               false,

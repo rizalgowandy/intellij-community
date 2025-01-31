@@ -108,7 +108,8 @@ public final class YamlJsonPsiWalker implements JsonLikePsiWalker {
       return YamlPropertyAdapter.createValueAdapterByType((YAMLValue)element);
     }
     if (element instanceof YAMLDocument) {
-      return new YamlEmptyObjectAdapter(element);
+      if (element.getChildren().length == 0) return new YamlEmptyObjectAdapter(element);
+      return createValueAdapter(element.getFirstChild());
     }
     if (element instanceof LeafPsiElement leaf && leaf.getElementType() == YAMLTokenTypes.INDENT) {
       return YamlPropertyAdapter.createEmptyValueAdapter(element, true);
@@ -365,6 +366,46 @@ public final class YamlJsonPsiWalker implements JsonLikePsiWalker {
       return preferInline ? generator.createEmptyArray() : generator.createEmptySequence();
     }
 
+    private static @Nullable PsiElement skipWsBackward(@Nullable PsiElement item) {
+      while (item instanceof PsiWhiteSpace || item instanceof PsiComment) {
+        item = PsiTreeUtil.prevLeaf(item);
+      }
+      return item;
+    }
+
+    private static @Nullable PsiElement skipWsForward(@Nullable PsiElement item) {
+      while (item instanceof PsiWhiteSpace || item instanceof PsiComment) {
+        item = PsiTreeUtil.nextLeaf(item);
+      }
+      return item;
+    }
+
+    @Override
+    public void removeArrayItem(@NotNull PsiElement item) {
+      PsiElement parent = item instanceof YAMLSequenceItem ? item : item.getParent();
+      if (parent instanceof YAMLSequenceItem) {
+        PsiElement grandParent = parent.getParent();
+        PsiElement prev = skipWsBackward(PsiTreeUtil.prevLeaf(parent));
+        PsiElement next = skipWsForward(PsiTreeUtil.nextLeaf(parent));
+        parent.delete();
+        if (grandParent instanceof YAMLArrayImpl && prev instanceof LeafPsiElement && ((LeafPsiElement)prev).getElementType() == YAMLTokenTypes.COMMA) {
+          prev.delete();
+        }
+        else if (grandParent instanceof YAMLArrayImpl && next instanceof LeafPsiElement && ((LeafPsiElement)next).getElementType() == YAMLTokenTypes.COMMA) {
+          next.delete();
+        }
+        if (!(grandParent instanceof YAMLArrayImpl) && prev instanceof LeafPsiElement && ((LeafPsiElement)prev).getElementType() == YAMLTokenTypes.EOL) {
+          prev.delete();
+        }
+        else if (!(grandParent instanceof YAMLArrayImpl) && next instanceof LeafPsiElement && ((LeafPsiElement)next).getElementType() == YAMLTokenTypes.EOL) {
+          next.delete();
+        }
+      }
+      else {
+        throw new IllegalArgumentException("Cannot remove item from a non-sequence element");
+      }
+    }
+
     @Override
     public @NotNull PsiElement addArrayItem(@NotNull PsiElement array, @NotNull String itemValue) {
       if (array instanceof YAMLArrayImpl) {
@@ -398,9 +439,9 @@ public final class YamlJsonPsiWalker implements JsonLikePsiWalker {
         sequence.add(generator.createEol());
       }
       List<YAMLSequenceItem> items = sequence.getItems();
-      YAMLSequenceItem lastItem = items.get(items.size() - 1);
+      YAMLSequenceItem lastItem = items.isEmpty() ? null : items.get(items.size() - 1);
 
-      int indent = lastChild != null ? YAMLUtil.getIndentToThisElement(lastItem) : YAMLUtil.getIndentToThisElement(sequence) + 2;
+      int indent = lastChild != null && lastItem != null ? YAMLUtil.getIndentToThisElement(lastItem) : YAMLUtil.getIndentToThisElement(sequence) + 2;
       sequence.add(generator.createIndent(indent));
       return sequence.add(sequenceItem);
     }
@@ -412,7 +453,15 @@ public final class YamlJsonPsiWalker implements JsonLikePsiWalker {
         if (sibling != null && sibling.getText().equals("\n")) return;
         PsiElement parent = self.getParent();
         parent.addAfter(generateSeparator(parent), self);
+        // two EOLs at the top level after a compound value
+        if (parent.getParent() instanceof YAMLDocument && isCompoundValue(((YAMLKeyValue)self).getValue())) {
+          parent.addAfter(generateSeparator(parent), self);
+        }
       }
+    }
+
+    private static boolean isCompoundValue(@Nullable YAMLValue value) {
+      return value instanceof YAMLMapping || value instanceof YAMLSequence;
     }
 
     private static @Nullable PsiElement skipSiblingsForward(@Nullable PsiElement element, @NotNull Class<? extends PsiElement> @NotNull ... elementClasses) {
@@ -493,9 +542,8 @@ public final class YamlJsonPsiWalker implements JsonLikePsiWalker {
       return sibling;
     }
 
-    @NotNull
     @Override
-    public PsiElement addProperty(@NotNull PsiElement contextForInsertion, @NotNull PsiElement newProperty) {
+    public @NotNull PsiElement addProperty(@NotNull PsiElement contextForInsertion, @NotNull PsiElement newProperty) {
       // Sometimes, post-write-action formatting can break the YAML structure if the area was not indented properly initially.
       // This is why we pre-format it to avoid problems.
       preFormatAround(contextForInsertion);

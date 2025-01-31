@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.application;
 
 import com.intellij.diagnostic.LoadingState;
@@ -44,7 +44,7 @@ public final class TransactionGuardImpl extends TransactionGuard {
                                 @NotNull Runnable transaction) {
     ModalityState modality = expectedContext == null ? ModalityState.nonModal() : ((TransactionIdImpl)expectedContext).myModality;
     Application app = ApplicationManager.getApplication();
-    if (app.isWriteIntentLockAcquired() && myWritingAllowed && !ModalityState.current().dominates(modality)) {
+    if (app.isWriteIntentLockAcquired() && myWritingAllowed && ModalityState.current().accepts(modality)) {
       if (!Disposer.isDisposed(parentDisposable)) {
         transaction.run();
       }
@@ -123,7 +123,11 @@ public final class TransactionGuardImpl extends TransactionGuard {
 
   @Override
   public boolean isWritingAllowed() {
-    ApplicationManager.getApplication().assertWriteIntentLockAcquired();
+    Application app = ApplicationManager.getApplication();
+    // Check to suppress LOG.error() about implicit lock
+    if (!app.isWriteIntentLockAcquired()) {
+      ApplicationManager.getApplication().assertWriteIntentLockAcquired();
+    }
     return myWritingAllowed;
   }
 

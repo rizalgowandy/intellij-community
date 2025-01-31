@@ -11,7 +11,6 @@ missing_abi,
 missing_copy_implementations,
 non_ascii_idents,
 noop_method_call,
-pointer_structural_match,
 rust_2021_incompatible_closure_captures,
 rust_2021_incompatible_or_patterns,
 rust_2021_prefixes_incompatible_syntax,
@@ -383,7 +382,7 @@ pub fn get_caches_home() -> Result<PathBuf> {
 #[cfg(target_os = "windows")]
 fn get_known_folder_path(rfid: &GUID, rfid_debug_name: &str) -> Result<PathBuf> {
     debug!("Calling SHGetKnownFolderPath({})", rfid_debug_name);
-    let result: PWSTR = unsafe { Shell::SHGetKnownFolderPath(rfid, Shell::KF_FLAG_CREATE, Foundation::HANDLE::default()) }?;
+    let result: PWSTR = unsafe { Shell::SHGetKnownFolderPath(rfid, Shell::KF_FLAG_CREATE, HANDLE::default()) }?;
     let result_str = unsafe { result.to_string() }?;
     debug!("  result: {}", result_str);
     Ok(PathBuf::from(result_str))
@@ -432,7 +431,7 @@ fn get_user_home() -> Result<PathBuf> {
 
 #[cfg(target_family = "windows")]
 fn win_user_profile_dir() -> Result<String> {
-    let token = Foundation::HANDLE(-4isize as *mut std::ffi::c_void);  // as defined in `GetCurrentProcessToken()`
+    let token = HANDLE(-4isize as *mut std::ffi::c_void);  // as defined in `GetCurrentProcessToken()`
     let mut buf = [0u16; Foundation::MAX_PATH as usize];
     let mut size = buf.len() as u32;
     debug!("Calling GetUserProfileDirectoryW({:?})", token);

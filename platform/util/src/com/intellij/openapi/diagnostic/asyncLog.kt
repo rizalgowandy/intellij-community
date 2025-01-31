@@ -4,7 +4,6 @@ package com.intellij.openapi.diagnostic
 import com.intellij.platform.util.coroutines.internal.runSuspend
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
-import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.annotations.ApiStatus.Internal
 import org.jetbrains.annotations.TestOnly
 import kotlin.coroutines.Continuation
@@ -35,10 +34,10 @@ internal fun LogEvent.log() {
 private fun LogEvent.logNow() {
   val (julLogger, level, message, throwable) = this
   if (throwable != null) {
-    julLogger.log(level.level, message, throwable);
+    julLogger.log(level.level, message, throwable)
   }
   else {
-    julLogger.log(level.level, message);
+    julLogger.log(level.level, message)
   }
 }
 
@@ -79,7 +78,13 @@ private class AsyncLog {
     GlobalScope.launch(dispatcher + CoroutineName("AsyncLog")) {
       for (event in queue) {
         when (event) {
-          is LogEvent -> event.logNow()
+          is LogEvent -> try {
+            event.logNow()
+          }
+          catch (t: Throwable) {
+            System.err.println("Logger failure while trying to log $event")
+            t.printStackTrace()
+          }
           is AwaitQueueEvent -> event.continuation.resume(Unit)
         }
       }

@@ -81,6 +81,11 @@ public final class CompileDriver {
   @ApiStatus.Experimental
   public static final Key<Boolean> SKIP_SAVE = Key.create("SKIP_SAVE");
 
+  @ApiStatus.Internal
+  @ApiStatus.Experimental
+  @TestOnly
+  public static final Key<Long> TIMEOUT = Key.create("TIMEOUT");
+
   private final Project myProject;
   private final Map<Module, String> myModuleOutputPaths = new HashMap<>();
   private final Map<Module, String> myModuleTestOutputPaths = new HashMap<>();
@@ -224,8 +229,7 @@ public final class CompileDriver {
     return scopes;
   }
 
-  @NotNull
-  private TaskFuture<?> compileInExternalProcess(@NotNull final CompileContextImpl compileContext, final boolean onlyCheckUpToDate) {
+  private @NotNull TaskFuture<?> compileInExternalProcess(final @NotNull CompileContextImpl compileContext, final boolean onlyCheckUpToDate) {
     final CompileScope scope = compileContext.getCompileScope();
     final Collection<String> paths = ReadAction.compute(() -> CompileScopeUtil.fetchFiles(compileContext));
     List<TargetTypeBuildScope> scopes = ReadAction.compute(() -> getBuildScopes(compileContext, scope, paths));
@@ -479,9 +483,16 @@ public final class CompileDriver {
 
         TaskFuture<?> future = compileInExternalProcess(compileContext, false);
         Tracer.Span compileInExternalProcessSpan = Tracer.start("compile in external process");
+        long currentTimeMillis = System.currentTimeMillis();
+        @SuppressWarnings("TestOnlyProblems") Long timeout = myProject.getUserData(TIMEOUT);
         while (!future.waitFor(200L, TimeUnit.MILLISECONDS)) {
           if (indicator.isCanceled()) {
             future.cancel(false);
+          }
+
+          if (isUnitTestMode && timeout != null && System.currentTimeMillis() > currentTimeMillis + timeout) {
+            LOG.error("CANCELLED BY TIMEOUT IN TESTS");
+            future.cancel(true);
           }
         }
         compileInExternalProcessSpan.complete();
@@ -541,9 +552,8 @@ public final class CompileDriver {
     });
   }
 
-  @Nullable
   @TestOnly
-  public static ExitStatus getExternalBuildExitStatus(CompileContext context) {
+  public static @Nullable ExitStatus getExternalBuildExitStatus(CompileContext context) {
     return context.getUserData(COMPILE_SERVER_BUILD_STATUS);
   }
 
@@ -664,7 +674,7 @@ public final class CompileDriver {
     }, null);
   }
 
-  private boolean executeCompileTasks(@NotNull final CompileContext context, final boolean beforeTasks) {
+  private boolean executeCompileTasks(final @NotNull CompileContext context, final boolean beforeTasks) {
     if (myProject.isDisposed()) {
       return false;
     }
@@ -709,7 +719,7 @@ public final class CompileDriver {
     return true;
   }
 
-  private boolean validateCompilerConfiguration(@NotNull final CompileScope scope, @NotNull final ProgressIndicator progress) {
+  private boolean validateCompilerConfiguration(final @NotNull CompileScope scope, final @NotNull ProgressIndicator progress) {
     ApplicationManager.getApplication().assertIsNonDispatchThread();
     try {
       final Pair<List<Module>, List<Module>> scopeModules = runWithReadAccess(progress, () -> {
@@ -745,7 +755,7 @@ public final class CompileDriver {
     }
   }
 
-  private <T> T runWithReadAccess(@NotNull final ProgressIndicator progress, Callable<? extends T> task) {
+  private <T> T runWithReadAccess(final @NotNull ProgressIndicator progress, Callable<? extends T> task) {
     return ReadAction.nonBlocking(task).expireWhen(myProject::isDisposed).wrapProgress(progress).executeSynchronously();
   }
 
@@ -889,8 +899,7 @@ public final class CompileDriver {
       .showNotification();
   }
 
-  @NotNull
-  private static String formatModulesList(@NotNull List<String> modules) {
+  private static @NotNull String formatModulesList(@NotNull List<String> modules) {
     final int maxModulesToShow = 10;
     List<String> actualNamesToInclude = new ArrayList<>(ContainerUtil.getFirstItems(modules, maxModulesToShow));
     if (modules.size() > maxModulesToShow) {

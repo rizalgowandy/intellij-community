@@ -3,10 +3,12 @@ package fleet.kernel.rete
 
 import com.jetbrains.rhizomedb.*
 import fleet.kernel.*
+import fleet.kernel.rete.impl.*
 import fleet.tracing.spannedScope
 import fleet.util.async.conflateReduce
 import fleet.util.async.use
 import fleet.util.channels.channels
+import fleet.util.logging.KLogger
 import fleet.util.logging.logger
 import fleet.util.openmap.merge
 import fleet.util.singleOrNullOrThrow
@@ -34,6 +36,7 @@ fun ReteState.dbOrThrow(): DB =
   }
 
 data class Rete internal constructor(
+  internal val failFast: Boolean,
   internal val commands: SendChannel<Command>,
   internal val reteState: StateFlow<ReteState>,
   internal val dbSource: ReteDbSource,
@@ -69,11 +72,22 @@ class ReteEntity(override val eid: EID) : Entity {
   }
 }
 
+
+/**
+ * Enables debug logging of everything what happens to all the queries collected in [body].
+ * It logs with debug level to [logger]
+ * [key] is a human-readable value, which will prepend all log messages in this block
+ * */
+suspend fun <T> withQueriesTracing(logger: KLogger, key: Any, body: suspend CoroutineScope.() -> T): T =
+  withContext(QueryTracingKey(key, logger), body)
+
 /**
  * Sets up [Rete] for use inside [body]
  * Runs a coroutine which consumes changes made in db and commands to add or remove [QueryObserver]s
+ *
+ * [failFast] disables exception handling for testing purposes.
  * */
-suspend fun <T> withRete(failWhenPropagationFailed: Boolean = false, body: suspend CoroutineScope.() -> T): T {
+suspend fun <T> withRete(failFast: Boolean = false, body: suspend CoroutineScope.() -> T): T {
   val (commandsSender, commandsReceiver) = channels<Rete.Command>(Channel.UNLIMITED)
   return spannedScope("withRete") {
     val kernel = transactor()
@@ -94,7 +108,7 @@ suspend fun <T> withRete(failWhenPropagationFailed: Boolean = false, body: suspe
                 .produceIn(this)
                 .consume {
                   val changesConflated = this
-                  val rete = postponedVars(lastKnownDb, ReteNetwork.new(lastKnownDb, failWhenPropagationFailed))
+                  val rete = postponedVars(lastKnownDb, ReteNetwork.new(lastKnownDb, failFast))
                   whileSelect {
                     commandsReceiver.onReceive { cmd ->
                       rete.command(cmd)
@@ -116,6 +130,7 @@ suspend fun <T> withRete(failWhenPropagationFailed: Boolean = false, body: suspe
           }.use {
             val rete = Rete(commands = commandsSender,
                             reteState = lastKnownDb,
+                            failFast = failFast,
                             dbSource = ReteDbSource(lastKnownDb))
             val reteEntity = change {
               register(ReteEntity)
@@ -146,7 +161,7 @@ suspend fun <T> withRete(failWhenPropagationFailed: Boolean = false, body: suspe
  * runs [body] on [Rete] [fleet.kernel.DbSource]
  * */
 suspend fun <T, U> Match<T>.withMatch(body: suspend CoroutineScope.(T) -> U): WithMatchResult<U> = let { self ->
-  withObservableMatches((observableSubmatches() as Sequence<ObservableMatch<*>>).toHashSet()) { body(self.value) }
+  withObservableMatches((observableSubmatches() as Sequence<ObservableMatch<*>>)) { body(self.value) }
 }
 
 /**
@@ -188,7 +203,7 @@ suspend fun waitForReteToCatchUp(targetDb: Q, cancellable: Boolean = true) {
  * It is populated by [Match.withMatch]
  * */
 data class ContextMatches internal constructor(
-  internal val matches: PersistentSet<ObservableMatch<*>>,
+  internal val matches: PersistentList<ObservableMatch<*>>,
 ) : CoroutineContext.Element {
   companion object : CoroutineContext.Key<ContextMatches>
 
@@ -318,19 +333,24 @@ private inline fun <T> DisposableHandle.useInline(function: () -> T): T =
  * Cancelled coroutines are being joined, before starting a new ones.
  * */
 suspend fun <T> Query<T>.launchOnEach(body: suspend CoroutineScope.(T) -> Unit) {
-  supervisorScope {
+  val rete = currentCoroutineContext().rete
+  suspend fun impl(scope: CoroutineScope) {
     val jobs = adaptiveMapOf<Match<*>, Job>()
     tokenSetsFlow().collect { tokenSet ->
       tokenSet.retracted.forEach { m ->
         jobs.remove(m)?.cancelAndJoin()
       }
       tokenSet.asserted.forEach { m ->
-        jobs.put(m, launch { m.withMatch(body) })?.let { previous ->
+        jobs.put(m, scope.launch { m.withMatch(body) })?.let { previous ->
           previous.cancel()
           Rete.logger.warn { "launchOnEach replaced existing job for a match, this should not happen. match: $m" }
         }
       }
     }
+  }
+  when {
+    rete.failFast -> coroutineScope { impl(this) }
+    else -> supervisorScope { impl(this) }
   }
 }
 

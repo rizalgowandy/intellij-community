@@ -1,4 +1,4 @@
-// Copyright 2000-2022 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.kotlin.idea.k2.codeinsight.inspections.expressions
 
 import com.intellij.codeInspection.ProblemsHolder
@@ -15,6 +15,7 @@ import org.jetbrains.kotlin.idea.base.analysis.api.utils.shortenReferencesInRang
 import org.jetbrains.kotlin.idea.base.resources.KotlinBundle
 import org.jetbrains.kotlin.idea.codeinsight.api.applicable.inspections.KotlinApplicableInspectionBase
 import org.jetbrains.kotlin.idea.codeinsight.api.applicable.inspections.KotlinModCommandQuickFix
+import org.jetbrains.kotlin.idea.codeinsights.impl.base.applicators.ApplicabilityRanges
 import org.jetbrains.kotlin.psi.*
 
 /**
@@ -66,6 +67,9 @@ internal class WhenWithOnlyElseInspection
     override fun getProblemDescription(element: KtWhenExpression, context: Context): String =
         KotlinBundle.message("inspection.when.with.only.else.display.name")
 
+    override fun getApplicableRanges(element: KtWhenExpression): List<TextRange> =
+        ApplicabilityRanges.whenKeyword(element)
+
     /**
      * STEP 1:
      * Discard `when` expressions that are not of the form
@@ -98,10 +102,10 @@ internal class WhenWithOnlyElseInspection
         return Context(isWhenUsedAsExpression, elseExpression.createSmartPointer(), subjectVariableInfo)
     }
 
-    override fun createQuickFix(
+    override fun createQuickFixes(
         element: KtWhenExpression,
         context: Context,
-    ) = object : KotlinModCommandQuickFix<KtWhenExpression>() {
+    ): Array<KotlinModCommandQuickFix<KtWhenExpression>> = arrayOf(object : KotlinModCommandQuickFix<KtWhenExpression>() {
 
         override fun getFamilyName(): String =
             KotlinBundle.message("inspection.when.with.only.else.action.name")
@@ -120,7 +124,7 @@ internal class WhenWithOnlyElseInspection
 
             updater.moveCaretTo(newCaretPosition)
         }
-    }
+    })
 
     /**
      * STEP 3.1:

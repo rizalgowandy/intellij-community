@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.refactoring.inline;
 
 import com.intellij.codeInsight.BlockUtils;
@@ -57,20 +57,18 @@ public final class InlineObjectProcessor extends BaseRefactoringProcessor {
     myNextMethod = nextMethod;
   }
 
-  @NotNull
   @Override
-  protected UsageViewDescriptor createUsageViewDescriptor(UsageInfo @NotNull [] usages) {
+  protected @NotNull UsageViewDescriptor createUsageViewDescriptor(UsageInfo @NotNull [] usages) {
     return new InlineViewDescriptor(myMethod);
   }
 
-  @NotNull
   @Override
-  protected Collection<? extends PsiElement> getElementsToWrite(@NotNull UsageViewDescriptor descriptor) {
+  protected @NotNull Collection<? extends PsiElement> getElementsToWrite(@NotNull UsageViewDescriptor descriptor) {
     return Collections.singletonList(myReference.getElement());
   }
 
   @Override
-  protected UsageInfo @NotNull [] findUsages() {
+  public UsageInfo @NotNull [] findUsages() {
     return new UsageInfo[]{new UsageInfo(myReference)};
   }
 
@@ -269,14 +267,12 @@ public final class InlineObjectProcessor extends BaseRefactoringProcessor {
     return showConflicts(conflicts, usagesIn);
   }
 
-  @NotNull
   @Override
-  protected String getCommandName() {
+  protected @NotNull String getCommandName() {
     return JavaRefactoringBundle.message("inline.object.command.name");
   }
 
-  @Nullable
-  public static InlineObjectProcessor create(PsiReference reference, PsiMethod method) {
+  public static @Nullable InlineObjectProcessor create(PsiReference reference, PsiMethod method) {
     if (!canInlineConstructorAndChainCall(reference, method)) {
       return null;
     }

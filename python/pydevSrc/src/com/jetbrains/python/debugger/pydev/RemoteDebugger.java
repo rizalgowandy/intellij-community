@@ -1,4 +1,4 @@
-// Copyright 2000-2019 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license that can be found in the LICENSE file.
+// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 
 /*
  * Author: atotic
@@ -13,6 +13,7 @@ import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.SystemInfo;
+import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.xdebugger.XSourcePosition;
@@ -26,13 +27,14 @@ import com.jetbrains.python.debugger.pydev.dataviewer.DataViewerCommandResult;
 import com.jetbrains.python.debugger.pydev.transport.ClientModeDebuggerTransport;
 import com.jetbrains.python.debugger.pydev.transport.DebuggerTransport;
 import com.jetbrains.python.debugger.pydev.transport.ServerModeDebuggerTransport;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 import com.jetbrains.python.tables.TableCommandParameters;
 import com.jetbrains.python.tables.TableCommandType;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.net.ServerSocket;
 import java.security.SecureRandom;
+import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -75,7 +77,7 @@ public class RemoteDebugger implements ProcessDebugger {
 
   private final List<RemoteDebuggerCloseListener> myCloseListeners = ContainerUtil.createLockFreeCopyOnWriteList();
 
-  @NotNull private final DebuggerTransport myDebuggerTransport;
+  private final @NotNull DebuggerTransport myDebuggerTransport;
 
   /**
    * The timeout for {@link VersionCommand}, which is used for handshaking with
@@ -88,8 +90,11 @@ public class RemoteDebugger implements ProcessDebugger {
   private final long myHandshakeTimeout;
 
   public RemoteDebugger(@NotNull IPyDebugProcess debugProcess, @NotNull String host, int port) {
+    int connectRetryTimeout = Registry.intValue("python.debugger.remote.connect.retry.timeout.ms", 1000);
+    int connectMaxAttempts = Registry.intValue("python.debugger.remote.connect.max.attempts", 30);
+
     myDebugProcess = debugProcess;
-    myDebuggerTransport = new ClientModeDebuggerTransport(this, host, port);
+    myDebuggerTransport = new ClientModeDebuggerTransport(this, host, port, Duration.ofMillis(connectRetryTimeout), connectMaxAttempts);
     myHandshakeTimeout = CLIENT_MODE_HANDSHAKE_TIMEOUT_IN_MILLIS;
   }
 
@@ -166,9 +171,8 @@ public class RemoteDebugger implements ProcessDebugger {
   }
 
   @Override
-  @Nullable
-  public String execTableCommand(String threadId, String frameId, String command, TableCommandType commandType,
-                                 TableCommandParameters tableCommandParameters) throws PyDebuggerException {
+  public @Nullable String execTableCommand(String threadId, String frameId, String command, TableCommandType commandType,
+                                           TableCommandParameters tableCommandParameters) throws PyDebuggerException {
     final TableCommand tableCommand = new TableCommand(this, threadId, frameId, command, commandType, tableCommandParameters);
     tableCommand.execute();
     return tableCommand.getCommandResult();
@@ -206,8 +210,7 @@ public class RemoteDebugger implements ProcessDebugger {
   }
 
   @Override
-  @NotNull
-  public DataViewerCommandResult executeDataViewerCommand(@NotNull DataViewerCommandBuilder builder) throws PyDebuggerException {
+  public @NotNull DataViewerCommandResult executeDataViewerCommand(@NotNull DataViewerCommandBuilder builder) throws PyDebuggerException {
     builder.setDebugger(this);
     DataViewerCommand command = builder.build();
     command.execute();
@@ -258,8 +261,7 @@ public class RemoteDebugger implements ProcessDebugger {
   }
 
   @Override
-  @Nullable
-  public String loadSource(String path) {
+  public @Nullable String loadSource(String path) {
     try {
       return executeCommand(new LoadSourceCommand(this, path)).getContent();
     }
@@ -391,7 +393,7 @@ public class RemoteDebugger implements ProcessDebugger {
   }
 
   @Override
-  public void execute(@NotNull final AbstractCommand command) {
+  public void execute(final @NotNull AbstractCommand command) {
     CountDownLatch myLatch = new CountDownLatch(1);
     ApplicationManager.getApplication().executeOnPooledThread(() -> {
       if (command instanceof ResumeOrStepCommand) {
@@ -544,7 +546,7 @@ public class RemoteDebugger implements ProcessDebugger {
   }
 
   // for DebuggerReader only
-  public void processResponse(@NotNull final String line) {
+  public void processResponse(final @NotNull String line) {
     try {
       final ProtocolFrame frame = new ProtocolFrame(line);
       logFrame(frame, false);

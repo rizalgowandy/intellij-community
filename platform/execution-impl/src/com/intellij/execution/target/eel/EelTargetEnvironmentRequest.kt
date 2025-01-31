@@ -1,24 +1,30 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.execution.target.eel
 
 import com.intellij.execution.Platform
-import com.intellij.execution.eel.EelPathUtils
 import com.intellij.execution.target.*
+import com.intellij.openapi.components.PersistentStateComponent
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
+import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.runBlockingCancellable
+import com.intellij.openapi.progress.runBlockingMaybeCancellable
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.NlsSafe
 import com.intellij.openapi.util.io.FileUtil
-import com.intellij.platform.eel.EelApi
-import com.intellij.platform.eel.EelExecApi
-import com.intellij.platform.eel.EelPlatform
+import com.intellij.platform.eel.*
 import com.intellij.platform.eel.fs.EelFileSystemApi
 import com.intellij.platform.eel.fs.getPath
-import com.intellij.platform.eel.getOrThrow
-import com.intellij.platform.ijent.tunnels.forwardLocalPort
+import com.intellij.platform.eel.path.EelPath
+import com.intellij.platform.eel.provider.asEelPath
+import com.intellij.platform.eel.provider.asNioPath
+import com.intellij.platform.eel.provider.utils.EelPathUtils
+import com.intellij.platform.eel.provider.utils.forwardLocalPort
 import com.intellij.platform.util.coroutines.channel.ChannelInputStream
 import com.intellij.platform.util.coroutines.channel.ChannelOutputStream
 import com.intellij.platform.util.coroutines.childScope
+import com.intellij.ui.icons.EMPTY_ICON
 import com.intellij.util.awaitCancellationAndInvoke
 import com.intellij.util.io.copyToAsync
 import com.intellij.util.net.NetUtils
@@ -31,6 +37,7 @@ import java.net.Socket
 import java.nio.file.Path
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
+import javax.swing.Icon
 
 private fun EelPlatform.toTargetPlatform(): TargetPlatform = when (this) {
   is EelPlatform.Posix -> TargetPlatform(Platform.UNIX)
@@ -39,21 +46,63 @@ private fun EelPlatform.toTargetPlatform(): TargetPlatform = when (this) {
 
 private fun LocalHostPort(port: Int) = HostPort("localhost", port)
 
+@NlsSafe
+private const val TARGET_TYPE_NAME = "eel"
+
+@ApiStatus.Internal
+class EelTargetType : TargetEnvironmentType<EelTargetEnvironmentRequest.Configuration>(TARGET_TYPE_NAME) {
+
+  override val displayName: String = TARGET_TYPE_NAME
+  override val icon: Icon = EMPTY_ICON
+
+  override fun createEnvironmentRequest(project: Project?, config: EelTargetEnvironmentRequest.Configuration): TargetEnvironmentRequest {
+    return EelTargetEnvironmentRequest(config)
+  }
+
+  override fun createConfigurable(
+    project: Project,
+    config: EelTargetEnvironmentRequest.Configuration,
+    defaultLanguage: LanguageRuntimeType<*>?,
+    parentConfigurable: Configurable?,
+  ): Configurable {
+    return object : Configurable {
+      override fun createComponent() = null
+      override fun isModified(): Boolean = false
+      override fun apply() {}
+      override fun getDisplayName() = TARGET_TYPE_NAME
+    }
+  }
+
+  override fun createSerializer(config: EelTargetEnvironmentRequest.Configuration): PersistentStateComponent<*> {
+    throw UnsupportedOperationException()
+  }
+
+  override fun createDefaultConfig(): EelTargetEnvironmentRequest.Configuration {
+    throw UnsupportedOperationException()
+  }
+
+  override fun duplicateConfig(config: EelTargetEnvironmentRequest.Configuration): EelTargetEnvironmentRequest.Configuration {
+    return EelTargetEnvironmentRequest.Configuration(config.eel)
+  }
+}
+
 @ApiStatus.Internal
 class EelTargetEnvironmentRequest(override val configuration: Configuration) : BaseTargetEnvironmentRequest(), VolumeCopyingRequest {
-  class Configuration(val eel: EelApi) : TargetEnvironmentConfiguration("eel"), TargetConfigurationWithLocalFsAccess {
+  class Configuration(val eel: EelApi) : TargetEnvironmentConfiguration(TARGET_TYPE_NAME), TargetConfigurationWithLocalFsAccess {
     override var projectRootOnTarget: String = ""
     override val asTargetConfig: TargetEnvironmentConfiguration = this
 
     override fun getTargetPathIfLocalPathIsOnTarget(probablyPathOnTarget: Path): FullPathOnTarget? {
-      return eel.mapper.getOriginalPath(probablyPathOnTarget)?.toString()
+      return probablyPathOnTarget.asEelPath().takeIf { it.descriptor == eel.descriptor }?.toString()
     }
   }
 
   override val targetPlatform: TargetPlatform = configuration.eel.platform.toTargetPlatform()
 
   override fun prepareEnvironment(progressIndicator: TargetProgressIndicator): TargetEnvironment {
-    return EelTargetEnvironment(this)
+    val env = EelTargetEnvironment(this)
+    environmentPrepared(env, progressIndicator)
+    return env
   }
 
   override var shouldCopyVolumes: Boolean = false
@@ -89,7 +138,7 @@ private class EelTargetEnvironment(override val request: EelTargetEnvironmentReq
 
     request.targetPortBindings.forEach { targetPortBinding ->
       val localPort = targetPortBinding.local ?: NetUtils.findAvailableSocketPort()
-      val targetAddress = eel.tunnels.hostAddressBuilder(targetPortBinding.target.toUShort()).build()
+      val targetAddress = EelTunnelsApi.HostAddress.Builder(targetPortBinding.target.toUShort()).build()
 
       forwardingScope.launch {
         forwardLocalPort(eel.tunnels, localPort, targetAddress)
@@ -103,7 +152,7 @@ private class EelTargetEnvironment(override val request: EelTargetEnvironmentReq
 
     request.localPortBindings.forEach { localPortBinding ->
       forwardingScope.launch {
-        val remoteAddress = eel.tunnels.hostAddressBuilder((localPortBinding.target ?: 0).toUShort()).build()
+        val remoteAddress = EelTunnelsApi.HostAddress.Builder((localPortBinding.target ?: 0).toUShort()).build()
         val acceptor = eel.tunnels.getAcceptorForRemotePort(remoteAddress).getOrThrow()
 
         val socket = Socket()
@@ -140,26 +189,32 @@ private class EelTargetEnvironment(override val request: EelTargetEnvironmentReq
     override val localRoot: Path,
     override val targetRoot: String,
   ) : UploadableVolume, DownloadableVolume {
+    init {
+      val x = 1
+    }
+
     private fun targetRootPath(): Path {
-      return eel.mapper.toNioPath(eel.fs.getPath(targetRoot))
+      return eel.fs.getPath(targetRoot).asNioPath()
     }
 
     override fun upload(relativePath: String, targetProgressIndicator: TargetProgressIndicator) {
       val from = localRoot.resolve(relativePath).normalize()
       val to = targetRootPath().resolve(relativePath).normalize()
       if (from == to) return
-      EelPathUtils.walkingTransfer(from, to, false) // TODO: generalize com.intellij.execution.wsl.ijent.nio.IjentWslNioFileSystemProvider.copy
+      // TODO: generalize com.intellij.execution.wsl.ijent.nio.IjentWslNioFileSystemProvider.copy
+      EelPathUtils.walkingTransfer(from, to, removeSource = false, copyAttributes = true)
     }
 
     override fun download(relativePath: String, progressIndicator: ProgressIndicator) {
       val from = targetRootPath().resolve(relativePath).normalize()
       val to = localRoot.resolve(relativePath).normalize()
       if (from == to) return
-      EelPathUtils.walkingTransfer(from, to, false) // TODO: generalize com.intellij.execution.wsl.ijent.nio.IjentWslNioFileSystemProvider.copy
+      // TODO: generalize com.intellij.execution.wsl.ijent.nio.IjentWslNioFileSystemProvider.copy
+      EelPathUtils.walkingTransfer(from, to, removeSource = false, copyAttributes = true)
     }
 
     override fun resolveTargetPath(relativePath: String): String {
-      return eel.mapper.getOriginalPath(targetRootPath().resolve(relativePath))!!.toString()
+      return targetRootPath().resolve(relativePath).asEelPath().toString()
     }
 
     companion object {
@@ -168,14 +223,20 @@ private class EelTargetEnvironment(override val request: EelTargetEnvironmentReq
 
         val remoteRoot = when (val targetRootPath = targetPathGetter()) {
           is TargetPath.Temporary -> {
-            eel.mapper.getOriginalPath(localRootPath)?.toString() ?: runBlockingCancellable {
-              val options = EelFileSystemApi.createTemporaryDirectoryOptions()
+            val localEelPath = localRootPath.asEelPath()
+            if (localEelPath.descriptor == eel.descriptor) {
+              localEelPath.toString()
+            }
+            else {
+              runBlockingMaybeCancellable {
+                val options = EelFileSystemApi.CreateTemporaryEntryOptions.Builder()
 
-              targetRootPath.prefix?.let(options::prefix)
-              targetRootPath.parentDirectory?.let(eel.fs::getPath)?.let(options::parentDirectory)
-              options.deleteOnExit(true)
+                targetRootPath.prefix?.let(options::prefix)
+                targetRootPath.parentDirectory?.let(eel.fs::getPath)?.let(options::parentDirectory)
+                options.deleteOnExit(true)
 
-              eel.fs.createTemporaryDirectory(options).toString()
+                eel.fs.createTemporaryDirectory(options.build()).getOrThrow().toString()
+              }
             }
           }
           is TargetPath.Persistent -> targetRootPath.absolutePath
@@ -207,13 +268,13 @@ private class EelTargetEnvironment(override val request: EelTargetEnvironmentReq
 
   override fun createProcess(commandLine: TargetedCommandLine, indicator: ProgressIndicator): Process {
     val command = commandLine.collectCommandsSynchronously()
-    val builder = EelExecApi.executeProcessBuilder(command.first())
+    val builder = EelExecApi.ExecuteProcessOptions.Builder(command.first())
 
     builder.args(command.drop(1))
     builder.env(commandLine.environmentVariables)
-    builder.workingDirectory(commandLine.workingDirectory)
+    builder.workingDirectory(commandLine.workingDirectory?.let { EelPath.parse(it, eel.descriptor) })
 
-    return runBlockingCancellable { eel.exec.execute(builder).getOrThrow().convertToJavaProcess() }
+    return runBlockingCancellable { eel.exec.execute(builder.build()).getOrThrow().convertToJavaProcess() }
   }
 
   override val targetPlatform: TargetPlatform = request.targetPlatform

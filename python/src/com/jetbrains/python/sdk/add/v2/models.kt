@@ -1,8 +1,7 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.jetbrains.python.sdk.add.v2
 
 import com.intellij.execution.target.TargetEnvironmentConfiguration
-import com.intellij.ide.util.PropertiesComponent
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.diagnostic.getOrLogException
 import com.intellij.openapi.fileChooser.FileChooser
@@ -10,8 +9,7 @@ import com.intellij.openapi.observable.properties.ObservableMutableProperty
 import com.intellij.openapi.observable.properties.PropertyGraph
 import com.intellij.openapi.projectRoots.Sdk
 import com.intellij.openapi.util.NlsSafe
-import com.jetbrains.extensions.failure
-import com.jetbrains.python.PyBundle
+import com.jetbrains.python.failure
 import com.jetbrains.python.PyBundle.message
 import com.jetbrains.python.configuration.PyConfigurableInterpreterList
 import com.jetbrains.python.newProject.steps.ProjectSpecificSettingsStep
@@ -22,11 +20,17 @@ import com.jetbrains.python.sdk.conda.suggestCondaPath
 import com.jetbrains.python.sdk.flavors.PythonSdkFlavor
 import com.jetbrains.python.sdk.flavors.conda.PyCondaEnv
 import com.jetbrains.python.sdk.flavors.conda.PyCondaEnvIdentity
-import com.jetbrains.python.sdk.pipenv.pipEnvPath
+import com.jetbrains.python.sdk.pipenv.getPipEnvExecutable
 import com.jetbrains.python.sdk.poetry.getPoetryExecutable
-import com.jetbrains.python.util.ErrorSink
-import kotlinx.coroutines.*
+import com.jetbrains.python.sdk.uv.impl.getUvExecutable
+import com.jetbrains.python.errorProcessing.ErrorSink
+import com.jetbrains.python.errorProcessing.emit
+import com.jetbrains.python.venvReader.tryResolvePath
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.plus
+import kotlinx.coroutines.withContext
 import java.nio.file.Path
 import kotlin.io.path.pathString
 
@@ -60,6 +64,7 @@ abstract class PythonAddInterpreterModel(params: PyInterpreterModelParams) {
     .stateIn(scope + uiContext, started = SharingStarted.Eagerly, initialValue = emptyList())
 
   val baseInterpreters: StateFlow<List<PythonSelectableInterpreter>> = allInterpreters
+    .map { it.filter { it.isBasePython() } }
     .mapLatest {
       it.filter { it !is ExistingSelectableInterpreter || it.isSystemWide } + installable
     }
@@ -90,11 +95,6 @@ abstract class PythonAddInterpreterModel(params: PyInterpreterModelParams) {
       withContext(uiContext) {
         state.condaExecutable.set(suggestedCondaLocalPath?.toString().orEmpty())
       }
-
-      //val environments = suggestedCondaPath?.let { PyCondaEnv.getEnvs(executor, suggestedCondaPath).getOrLogException(
-      //  PythonAddInterpreterPresenter.LOG) }
-      //baseConda = environments?.find { env -> env.envIdentity.let { it is PyCondaEnvIdentity.UnnamedEnv && it.isBase } }
-
     }
   }
 
@@ -118,7 +118,10 @@ abstract class PythonAddInterpreterModel(params: PyInterpreterModelParams) {
 
   private suspend fun initInterpreterList() {
     withContext(Dispatchers.IO) {
+      // TODO: PythonInterpreterService: load valid system pythons
       val existingSdks = PyConfigurableInterpreterList.getInstance(null).getModel().sdks.toList()
+
+
       val allValidSdks = ProjectSpecificSettingsStep.getValidPythonSdks(existingSdks)
         .map { ExistingSelectableInterpreter(it, PySdkUtil.getLanguageLevelForSdk(it), it.isSystemWide) }
 
@@ -133,6 +136,7 @@ abstract class PythonAddInterpreterModel(params: PyInterpreterModelParams) {
       val existingSdkPaths = existingSdks.mapNotNull { it.homePath }.mapNotNull { tryResolvePath(it) }.toSet()
 
       val detected = PythonSdkFlavor.getApplicableFlavors(true).flatMap { sdkFlavor ->
+        // TODO: PythonInterpreterService: detect valid system pythons
         sdkFlavor.suggestLocalHomePaths(null, null)
           .filterNot { it in existingSdkPaths }
           .map { DetectedSelectableInterpreter(it.pathString, sdkFlavor.getLanguageLevel(it.pathString)) }
@@ -168,30 +172,32 @@ abstract class PythonMutableTargetAddInterpreterModel(params: PyInterpreterModel
     super.initialize()
     detectPoetryExecutable()
     detectPipEnvExecutable()
+    detectUvExecutable()
   }
 
-  fun detectPoetryExecutable() {
-    // todo this is local case, fix for targets
-    scope.launch(Dispatchers.IO) {
-      val poetryExecutable = getPoetryExecutable()
+  suspend fun detectPoetryExecutable() {
+    // FIXME: support targets
+    getPoetryExecutable().getOrNull()?.let {
       withContext(Dispatchers.EDT) {
-        poetryExecutable?.let { state.poetryExecutable.set(it.pathString) }
+        state.poetryExecutable.set(it.pathString)
       }
     }
   }
 
-  fun detectPipEnvExecutable() {
-    // todo this is local case, fix for targets
-    val savedPath = PropertiesComponent.getInstance().pipEnvPath
-    if (savedPath != null) {
-      state.pipenvExecutable.set(savedPath)
+  suspend fun detectPipEnvExecutable() {
+    // FIXME: support targets
+    getPipEnvExecutable().getOrNull()?.let {
+      withContext(Dispatchers.EDT) {
+        state.pipenvExecutable.set(it.pathString)
+      }
     }
-    else {
-      scope.launch(Dispatchers.IO) {
-        val detectedExecutable = com.jetbrains.python.sdk.pipenv.detectPipEnvExecutable()
-        withContext(Dispatchers.EDT) {
-          detectedExecutable?.let { state.pipenvExecutable.set(it.path) }
-        }
+  }
+
+  suspend fun detectUvExecutable() {
+    // FIXME: support targets
+    getUvExecutable()?.pathString?.let {
+      withContext(Dispatchers.EDT) {
+        state.uvExecutable.set(it)
       }
     }
   }
@@ -226,8 +232,15 @@ class PythonLocalAddInterpreterModel(params: PyInterpreterModelParams)
 }
 
 
-// todo does it need target configuration
 sealed class PythonSelectableInterpreter {
+  /**
+   * Base python is some system python (not venv) which can be used as a base for venv.
+   * In terms of flavors we call it __not__ [PythonSdkFlavor.isPlatformIndependent]
+   */
+  open suspend fun isBasePython(): Boolean = withContext(Dispatchers.IO) {
+    PythonSdkFlavor.tryDetectFlavorByLocalPath(homePath)?.isPlatformIndependent == false
+  }
+
   abstract val homePath: String
   abstract val languageLevel: LanguageLevel
   override fun toString(): String =
@@ -235,6 +248,10 @@ sealed class PythonSelectableInterpreter {
 }
 
 class ExistingSelectableInterpreter(val sdk: Sdk, override val languageLevel: LanguageLevel, val isSystemWide: Boolean) : PythonSelectableInterpreter() {
+  override suspend fun isBasePython(): Boolean = withContext(Dispatchers.IO) {
+    !sdk.sdkFlavor.isPlatformIndependent
+  }
+
   override val homePath = sdk.homePath!! // todo is it safe
 }
 
@@ -243,6 +260,7 @@ class DetectedSelectableInterpreter(override val homePath: String, override val 
 class ManuallyAddedSelectableInterpreter(override val homePath: String, override val languageLevel: LanguageLevel) : PythonSelectableInterpreter()
 
 class InstallableSelectableInterpreter(val sdk: PySdkToInstall) : PythonSelectableInterpreter() {
+  override suspend fun isBasePython(): Boolean = true
   override val homePath: String = ""
   override val languageLevel = PySdkUtil.getLanguageLevelForSdk(sdk)
 }
@@ -261,14 +279,13 @@ open class AddInterpreterState(propertyGraph: PropertyGraph) {
    * Use [PythonAddInterpreterModel.getBaseCondaOrError]
    */
   val baseCondaEnv: ObservableMutableProperty<PyCondaEnv?> = propertyGraph.property(null)
-
-
 }
 
 class MutableTargetState(propertyGraph: PropertyGraph) : AddInterpreterState(propertyGraph) {
   val baseInterpreter: ObservableMutableProperty<PythonSelectableInterpreter?> = propertyGraph.property(null)
   val newCondaEnvName: ObservableMutableProperty<String> = propertyGraph.property("")
   val poetryExecutable: ObservableMutableProperty<String> = propertyGraph.property("")
+  val uvExecutable: ObservableMutableProperty<String> = propertyGraph.property("")
   val pipenvExecutable: ObservableMutableProperty<String> = propertyGraph.property("")
   val venvPath: ObservableMutableProperty<String> = propertyGraph.property("")
   val inheritSitePackages = propertyGraph.property(false)
@@ -276,10 +293,10 @@ class MutableTargetState(propertyGraph: PropertyGraph) : AddInterpreterState(pro
 }
 
 
-val PythonAddInterpreterModel.existingSdks
+internal val PythonAddInterpreterModel.existingSdks
   get() = allInterpreters.value.filterIsInstance<ExistingSelectableInterpreter>().map { it.sdk }
 
-fun PythonAddInterpreterModel.findInterpreter(path: String): PythonSelectableInterpreter? {
+internal fun PythonAddInterpreterModel.findInterpreter(path: String): PythonSelectableInterpreter? {
   return allInterpreters.value.asSequence().find { it.homePath == path }
 }
 
@@ -294,5 +311,5 @@ internal suspend fun PythonAddInterpreterModel.getBaseCondaOrError(): Result<PyC
   if (baseConda != null) return Result.success(baseConda)
   detectCondaEnvironments()?.let { return failure(it) }
   baseConda = state.baseCondaEnv.get()
-  return if (baseConda != null) Result.success(baseConda) else failure(PyBundle.message("python.sdk.conda.no.base.env.error"))
+  return if (baseConda != null) Result.success(baseConda) else failure(message("python.sdk.conda.no.base.env.error"))
 }

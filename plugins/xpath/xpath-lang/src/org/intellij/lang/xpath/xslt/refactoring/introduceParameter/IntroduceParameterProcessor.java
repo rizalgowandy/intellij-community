@@ -63,13 +63,12 @@ class IntroduceParameterProcessor extends BaseRefactoringProcessor {
 
 
     @Override
-    @NotNull
-    protected UsageViewDescriptor createUsageViewDescriptor(UsageInfo @NotNull [] usageInfos) {
+    protected @NotNull UsageViewDescriptor createUsageViewDescriptor(UsageInfo @NotNull [] usageInfos) {
         return new MyUsageViewDescriptorAdapter();
     }
 
     @Override
-    protected UsageInfo @NotNull [] findUsages() {
+    public UsageInfo @NotNull [] findUsages() {
         int usageCount = myOtherExpressions.size() + 1;
 
         final List<PsiElement> callsToUpdate;
@@ -161,8 +160,7 @@ class IntroduceParameterProcessor extends BaseRefactoringProcessor {
     }
 
     @Override
-    @NotNull
-    protected String getCommandName() {
+    protected @NotNull String getCommandName() {
         return XPathBundle.message("command.name.introduce.xslt.parameter");
     }
 

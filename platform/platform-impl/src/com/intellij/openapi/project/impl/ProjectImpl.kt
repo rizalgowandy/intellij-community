@@ -115,7 +115,13 @@ open class ProjectImpl(parent: ComponentManagerImpl, filePath: Path, projectName
   @Suppress("LeakingThis")
   @Internal
   @JvmField
-  val asyncPreloadServiceScope: CoroutineScope = getCoroutineScope().childScope(supervisor = false)
+  val asyncPreloadServiceScope: CoroutineScope = getCoroutineScope()
+    .childScope(supervisor = false, name = "project service preloading")
+
+  @Internal
+  @JvmField
+  val activityScope: CoroutineScope = getCoroutineScope()
+    .childScope(supervisor = false, name = "project activities")
 
   private val earlyDisposable = AtomicReference(Disposer.newDisposable())
 
@@ -166,6 +172,10 @@ open class ProjectImpl(parent: ComponentManagerImpl, filePath: Path, projectName
     coroutineScopeMethodType,
     emptyConstructorMethodType,
   )
+
+  override fun isComponentCreated(): Boolean {
+    return containerState.get() >= ContainerState.COMPONENT_CREATED
+  }
 
   override fun isInitialized(): Boolean {
     val containerState = containerState.get()
@@ -417,5 +427,6 @@ open class ProjectImpl(parent: ComponentManagerImpl, filePath: Path, projectName
     super.stopServicePreloading()
 
     asyncPreloadServiceScope.cancel()
+    activityScope.cancel()
   }
 }

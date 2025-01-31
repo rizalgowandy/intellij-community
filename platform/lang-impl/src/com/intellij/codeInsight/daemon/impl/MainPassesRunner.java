@@ -33,6 +33,7 @@ import com.intellij.psi.PsiDocumentManager;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.PsiManager;
 import com.intellij.util.ExceptionUtil;
+import com.intellij.util.concurrency.ThreadingAssertions;
 import com.intellij.util.containers.ContainerUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -105,7 +106,7 @@ public final class MainPassesRunner {
                              @NotNull ProgressIndicatorEx progress,
                              @Nullable HighlightSeverity minimumSeverity) {
     ApplicationManager.getApplication().assertIsNonDispatchThread();
-    ApplicationManager.getApplication().assertReadAccessNotAllowed();
+    ThreadingAssertions.assertNoOwnReadAccess();
     progress.setIndeterminate(false);
     List<Pair<VirtualFile, DaemonProgressIndicator>> daemonIndicators = Collections.synchronizedList(new ArrayList<>(files.size()));
     progress.addStateDelegate(new AbstractProgressIndicatorExBase() {
@@ -190,10 +191,9 @@ public final class MainPassesRunner {
     // repeat several times when accidental background activity cancels highlighting
     int retries = 100;
     for (int i = 0; i < retries; i++) {
-      int oldDelay = settings.getAutoReparseDelay();
       try {
         InspectionProfile currentProfile = myInspectionProfile;
-        settings.setAutoReparseDelay(0);
+        settings.forceUseZeroAutoReparseDelay(true);
         Function<InspectionProfile, InspectionProfileWrapper> profileProvider =
           p -> currentProfile == null
                ? new InspectionProfileWrapper((InspectionProfileImpl)p)
@@ -214,7 +214,7 @@ public final class MainPassesRunner {
         exception = e;
       }
       finally {
-        settings.setAutoReparseDelay(oldDelay);
+        settings.forceUseZeroAutoReparseDelay(false);
       }
     }
     if (exception != null) {

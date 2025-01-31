@@ -1,6 +1,7 @@
 // Copyright 2000-2019 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license that can be found in the LICENSE file.
 package com.jetbrains.python.psi.types;
 
+import com.intellij.openapi.util.Ref;
 import com.intellij.psi.PsiElement;
 import com.intellij.util.ArrayUtilRt;
 import com.intellij.util.ProcessingContext;
@@ -23,36 +24,30 @@ import java.util.Objects;
  */
 @Deprecated(forRemoval = true)
 public class PyGenericType implements PyTypeVarType {
-  @NotNull private final String myName;
-  @Nullable private final PyType myBound;
-  @Nullable private final PyType myDefaultType;
+  private final @NotNull String myName;
+  private final @NotNull List<@Nullable PyType> myConstraints;
+  private final @Nullable PyType myBound;
+  private final @Nullable Ref<PyType> myDefaultType;
   private final boolean myIsDefinition;
-  @Nullable private final PyQualifiedNameOwner myDeclarationElement;
-  @Nullable private PyQualifiedNameOwner myScopeOwner;
+  private final @Nullable PyQualifiedNameOwner myDeclarationElement;
+  private @Nullable PyQualifiedNameOwner myScopeOwner;
 
-  public PyGenericType(@NotNull String name, @Nullable PyType bound) {
-    this(name, bound, false);
-  }
-
-  public PyGenericType(@NotNull String name, @Nullable PyType bound, @Nullable PyType defaultType) {
-    this(name, bound, defaultType, false, null, null);
-  }
-
-  public PyGenericType(@NotNull String name, @Nullable PyType bound, boolean isDefinition) {
-    this(name, bound, isDefinition, null);
-  }
-
-  private PyGenericType(@NotNull String name, @Nullable PyType bound, boolean isDefinition, @Nullable PyTargetExpression target) {
-    this(name, bound, null, isDefinition, target, null);
+  public PyGenericType(@NotNull String name,
+                       @NotNull List<@Nullable PyType> constraints,
+                       @Nullable PyType bound,
+                       @Nullable Ref<PyType> defaultType) {
+    this(name, constraints, bound, defaultType, false, null, null);
   }
 
   private PyGenericType(@NotNull String name,
-                       @Nullable PyType bound,
-                       @Nullable PyType defaultType,
-                       boolean isDefinition,
-                       @Nullable PyQualifiedNameOwner declarationElement,
-                       @Nullable PyQualifiedNameOwner scopeOwner) {
+                        @NotNull List<@Nullable PyType> constraints,
+                        @Nullable PyType bound,
+                        @Nullable Ref<PyType> defaultType,
+                        boolean isDefinition,
+                        @Nullable PyQualifiedNameOwner declarationElement,
+                        @Nullable PyQualifiedNameOwner scopeOwner) {
     myName = name;
+    myConstraints = constraints;
     myBound = bound;
     myDefaultType = defaultType;
     myIsDefinition = isDefinition;
@@ -60,18 +55,16 @@ public class PyGenericType implements PyTypeVarType {
     myScopeOwner = scopeOwner;
   }
 
-  @Nullable
   @Override
-  public PyQualifiedNameOwner getDeclarationElement() {
+  public @Nullable PyQualifiedNameOwner getDeclarationElement() {
     return myDeclarationElement;
   }
 
-  @Nullable
   @Override
-  public List<? extends RatedResolveResult> resolveMember(@NotNull String name,
-                                                          @Nullable PyExpression location,
-                                                          @NotNull AccessDirection direction,
-                                                          @NotNull PyResolveContext resolveContext) {
+  public @Nullable List<? extends RatedResolveResult> resolveMember(@NotNull String name,
+                                                                    @Nullable PyExpression location,
+                                                                    @NotNull AccessDirection direction,
+                                                                    @NotNull PyResolveContext resolveContext) {
     PyType bound = getBoundPromotedToClassObjectTypesIfNeeded();
     if (bound != null) {
       return bound.resolveMember(name, location, direction, resolveContext);
@@ -88,19 +81,18 @@ public class PyGenericType implements PyTypeVarType {
     return ArrayUtilRt.EMPTY_OBJECT_ARRAY;
   }
 
-  @Nullable
-  private PyType getBoundPromotedToClassObjectTypesIfNeeded() {
+  private @Nullable PyType getBoundPromotedToClassObjectTypesIfNeeded() {
+    PyType effectiveBound = myConstraints.isEmpty() ? myBound : PyUnionType.union(myConstraints);
     if (myIsDefinition) {
-      return PyTypeUtil.toStream(myBound)
+      return PyTypeUtil.toStream(effectiveBound)
         .map(t -> t instanceof PyInstantiableType ? ((PyInstantiableType<?>)t).toClass() : t)
         .collect(PyTypeUtil.toUnion());
     }
-    return myBound;
+    return effectiveBound;
   }
 
-  @NotNull
   @Override
-  public String getName() {
+  public @NotNull String getName() {
     return myName;
   }
 
@@ -130,12 +122,16 @@ public class PyGenericType implements PyTypeVarType {
     return myName.hashCode();
   }
 
-  @NotNull
   @Override
-  public String toString() {
+  public @NotNull String toString() {
     // A qualified name can be null e.g. for a local function
     String scopeName = myScopeOwner != null ? Objects.requireNonNullElse(myScopeOwner.getQualifiedName(), myScopeOwner.getName()) : null;
     return "PyGenericType: " + (scopeName != null ? scopeName + ":" : "") + getName();
+  }
+
+  @Override
+  public @NotNull List<@Nullable PyType> getConstraints() {
+    return myConstraints;
   }
 
   @Override
@@ -144,7 +140,7 @@ public class PyGenericType implements PyTypeVarType {
   }
 
   @Override
-  public PyType getDefaultType() {
+  public @Nullable Ref<PyType> getDefaultType() {
     return myDefaultType;
   }
 
@@ -158,19 +154,18 @@ public class PyGenericType implements PyTypeVarType {
     return myScopeOwner;
   }
 
-  @NotNull
-  public PyGenericType withScopeOwner(@Nullable PyQualifiedNameOwner scopeOwner) {
-    return new PyGenericType(getName(), getBound(), getDefaultType(), isDefinition(), getDeclarationElement(), scopeOwner);
+  public @NotNull PyGenericType withScopeOwner(@Nullable PyQualifiedNameOwner scopeOwner) {
+    return new PyGenericType(getName(), getConstraints(), getBound(), getDefaultType(), isDefinition(), getDeclarationElement(),
+                             scopeOwner);
   }
 
-  @NotNull
-  public PyGenericType withTargetExpression(@Nullable PyTargetExpression targetExpression) {
+  public @NotNull PyGenericType withTargetExpression(@Nullable PyTargetExpression targetExpression) {
     return withDeclarationElement(targetExpression);
   }
 
-  @NotNull
-  public PyGenericType withDeclarationElement(@Nullable PyQualifiedNameOwner declarationElement) {
-    return new PyGenericType(getName(), getBound(), getDefaultType(), isDefinition(), declarationElement, getScopeOwner());
+  public @NotNull PyGenericType withDeclarationElement(@Nullable PyQualifiedNameOwner declarationElement) {
+    return new PyGenericType(getName(), getConstraints(), getBound(), getDefaultType(), isDefinition(), declarationElement,
+                             getScopeOwner());
   }
 
   @ApiStatus.Internal
@@ -181,15 +176,17 @@ public class PyGenericType implements PyTypeVarType {
     myScopeOwner = scopeOwner;
   }
 
-  @NotNull
   @Override
-  public PyGenericType toInstance() {
-    return myIsDefinition ? new PyGenericType(myName, myBound, myDefaultType, false, myDeclarationElement, myScopeOwner) : this;
+  public @NotNull PyGenericType toInstance() {
+    return myIsDefinition
+           ? new PyGenericType(myName, myConstraints, myBound, myDefaultType, false, myDeclarationElement, myScopeOwner)
+           : this;
   }
 
-  @NotNull
   @Override
-  public PyGenericType toClass() {
-    return myIsDefinition ? this : new PyGenericType(myName, myBound, myDefaultType, true, myDeclarationElement, myScopeOwner);
+  public @NotNull PyGenericType toClass() {
+    return myIsDefinition
+           ? this
+           : new PyGenericType(myName, myConstraints, myBound, myDefaultType, true, myDeclarationElement, myScopeOwner);
   }
 }

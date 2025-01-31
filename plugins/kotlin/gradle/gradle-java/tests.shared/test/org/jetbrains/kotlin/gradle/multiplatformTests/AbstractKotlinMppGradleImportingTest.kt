@@ -42,7 +42,6 @@ import org.junit.Test
 import org.junit.runner.Description
 import org.junit.runner.RunWith
 import java.io.File
-import java.io.PrintStream
 import java.util.*
 
 /**
@@ -104,7 +103,8 @@ abstract class AbstractKotlinMppGradleImportingTest : GradleImportingTestCase(),
         AllFilesAreUnderContentRootChecker,
         DocumentationChecker,
         ReferenceTargetChecker,
-        KotlinMppTestHooks
+        KotlinMppTestHooks,
+        LibraryKindsChecker,
     )
 
     private val context: KotlinMppTestsContextImpl = KotlinMppTestsContextImpl(installedFeatures)
@@ -175,16 +175,16 @@ abstract class AbstractKotlinMppGradleImportingTest : GradleImportingTestCase(),
             "local.properties",
             """
                 |sdk.dir=${KotlinTestUtils.getAndroidSdkSystemIndependentPath()}
-                |org.gradle.java.home=${findJdkPath()}
+                |org.gradle.java.home=${requireJdkHome()}
             """.trimMargin()
         )
     }
 
-    final override fun findJdkPath(): String {
+    final override fun requireJdkHome(): String {
         return System.getenv("JDK_17") ?: System.getenv("JDK_17_0") ?: System.getenv("JAVA17_HOME") ?: run {
             val message = "Missing JDK_17 or JDK_17_0 or JAVA17_HOME  environment variable"
             if (IS_UNDER_TEAMCITY) LOG.error(message) else LOG.warn(message)
-            super.findJdkPath()
+            super.requireJdkHome()
         }
     }
 
@@ -204,7 +204,7 @@ abstract class AbstractKotlinMppGradleImportingTest : GradleImportingTestCase(),
 
         context.testProject = myProject
         context.testProjectRoot = myProjectRoot.toNioPath().toFile()
-        context.gradleJdkPath = File(findJdkPath())
+        context.gradleJdkPath = File(requireJdkHome())
     }
 
     override fun configureGradleVmOptions(options: MutableSet<String>) {
@@ -316,12 +316,6 @@ abstract class AbstractKotlinMppGradleImportingTest : GradleImportingTestCase(),
         return ImportSpecBuilder(super.createImportSpec())
             .createDirectoriesForEmptyContentRoots()
             .build()
-    }
-
-    // super does plain `print` instead of `println`, so we need to
-    // override it to preserve line breaks in output of Gradle-process
-    final override fun printOutput(stream: PrintStream, text: String) {
-        stream.println(text)
     }
 
     @Test

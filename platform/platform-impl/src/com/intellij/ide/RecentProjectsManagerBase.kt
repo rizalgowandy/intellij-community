@@ -7,7 +7,6 @@ import com.intellij.diagnostic.runActivity
 import com.intellij.ide.impl.OpenProjectTask
 import com.intellij.ide.impl.ProjectUtil
 import com.intellij.ide.impl.ProjectUtil.isSameProject
-import com.intellij.ide.impl.ProjectUtilCore
 import com.intellij.ide.impl.ProjectUtilService
 import com.intellij.ide.lightEdit.LightEdit
 import com.intellij.ide.vcs.RecentProjectsBranchesProvider
@@ -23,12 +22,12 @@ import com.intellij.openapi.options.advanced.AdvancedSettings
 import com.intellij.openapi.progress.runBlockingMaybeCancellable
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectCloseListener
+import com.intellij.openapi.project.ProjectCoreUtil
 import com.intellij.openapi.project.ProjectManager
 import com.intellij.openapi.project.ex.ProjectManagerEx
 import com.intellij.openapi.project.impl.OpenProjectImplOptions
 import com.intellij.openapi.project.impl.createNewProjectFrameProducer
 import com.intellij.openapi.project.impl.frame
-import com.intellij.openapi.util.Key
 import com.intellij.openapi.util.ModificationTracker
 import com.intellij.openapi.util.io.FileUtilRt
 import com.intellij.openapi.util.registry.Registry
@@ -78,24 +77,12 @@ open class RecentProjectsManagerBase(coroutineScope: CoroutineScope) :
   RecentProjectsManager, PersistentStateComponent<RecentProjectManagerState>, ModificationTracker {
   companion object {
     const val MAX_PROJECTS_IN_MAIN_MENU: Int = 6
-    private val TEMPORARY_PROJECT_KEY = Key.create<Boolean>("RecentProjectManager.TemporaryProject")
 
     @JvmStatic
     fun getInstanceEx(): RecentProjectsManagerBase = RecentProjectsManager.getInstance() as RecentProjectsManagerBase
 
     @JvmName("isFileSystemPath")
     internal fun isFileSystemPath(path: String): Boolean = path.indexOf('/') != -1 || path.indexOf('\\') != -1
-
-    /**
-     * Indicates that the project shouldn't be added to the recent projects list. 
-     * This function must be called before the project is opened, e.g., in [com.intellij.ide.impl.OpenProjectTaskBuilder.beforeInit].
-     */
-    @Internal
-    fun markProjectAsTemporary(project: Project) {
-      project.putUserData(TEMPORARY_PROJECT_KEY, true)
-    }
-
-    private fun isTemporaryProject(project: Project) = project.getUserData(TEMPORARY_PROJECT_KEY) == true
   }
 
   private val modCounter = LongAdder()
@@ -141,6 +128,10 @@ open class RecentProjectsManagerBase(coroutineScope: CoroutineScope) :
     synchronized(stateLock) {
       this.state = state
       state.pid = null
+
+      for ((path, value) in state.additionalInfo) {
+        checkForNonsenseBounds("com.intellij.ide.RecentProjectsManagerBase.loadState(path=$path)", value.frame?.bounds)
+      }
 
       // IDEA <= 2019.2 doesn't delete project info from additionalInfo on project delete
       @Suppress("DEPRECATION")
@@ -243,10 +234,6 @@ open class RecentProjectsManagerBase(coroutineScope: CoroutineScope) :
   }
 
   fun markPathRecent(path: String, project: Project): RecentProjectMetaInfo {
-    if (isTemporaryProject(project)) {
-      return RecentProjectMetaInfo()
-    }
-    
     synchronized(stateLock) {
       for (group in state.groups) {
         if (group.markProjectFirst(path)) {
@@ -322,7 +309,7 @@ open class RecentProjectsManagerBase(coroutineScope: CoroutineScope) :
     }
 
     FUSProjectHotStartUpMeasurer.reportProjectPath(projectFile)
-    if (isValidProjectPath(projectFile)) {
+    if (ProjectUtil.isValidProjectPath(projectFile)) {
       val projectManager = ProjectManagerEx.getInstanceEx()
       projectManager.openProjects.firstOrNull { isSameProject(projectFile = projectFile, project = it) }?.let { project ->
         FUSProjectHotStartUpMeasurer.reportAlreadyOpenedProject()
@@ -344,7 +331,7 @@ open class RecentProjectsManagerBase(coroutineScope: CoroutineScope) :
   }
 
   override fun setActivationTimestamp(project: Project, timestamp: Long) {
-    if (disableUpdatingRecentInfo.get() || isTemporaryProject(project)) {
+    if (disableUpdatingRecentInfo.get()) {
       return
     }
 
@@ -373,7 +360,7 @@ open class RecentProjectsManagerBase(coroutineScope: CoroutineScope) :
   }
 
   internal suspend fun projectOpened(project: Project, openTimestamp: Long) {
-    if (disableUpdatingRecentInfo.get() || LightEdit.owns(project) || isTemporaryProject(project)) {
+    if (disableUpdatingRecentInfo.get() || LightEdit.owns(project)) {
       return
     }
 
@@ -456,7 +443,7 @@ open class RecentProjectsManagerBase(coroutineScope: CoroutineScope) :
     }
     check(nameResolveRequests.tryEmit(Unit))
 
-    return getProjectNameOnlyByPath(path).nameOnlyByProjectPath
+    return getProjectNameOnlyByPath(path)
   }
 
   fun forceReopenProjects() {
@@ -502,7 +489,7 @@ open class RecentProjectsManagerBase(coroutineScope: CoroutineScope) :
       val toOpen = openPaths.mapNotNull { entry ->
         runCatching {
           val path = Path.of(entry.key)
-          if (isValidProjectPath(path)) Pair(path, entry.value) else null
+          if (ProjectUtil.isValidProjectPath(path)) Pair(path, entry.value) else null
         }.getOrLogException(LOG)
       }
 
@@ -547,13 +534,7 @@ open class RecentProjectsManagerBase(coroutineScope: CoroutineScope) :
 
   override fun suggestNewProjectLocation(): String = ProjectUtil.getBaseDir()
 
-  // open for Rider
-  @Suppress("MemberVisibilityCanBePrivate")
-  protected suspend fun isValidProjectPath(file: Path): Boolean {
-    return withContext(Dispatchers.IO) { ProjectUtilCore.isValidProjectPath(file) }
-  }
-
-  // toOpen -  no non-existent project paths and every info has a frame
+  // toOpen - no non-existent project paths and every info has a frame
   private suspend fun openMultiple(toOpen: List<Pair<Path, RecentProjectMetaInfo>>): Boolean {
     val activeInfo = (toOpen.maxByOrNull { it.second.activationTimestamp } ?: return false).second
     val taskList = ArrayList<Pair<Path, OpenProjectTask>>(toOpen.size)
@@ -813,7 +794,7 @@ int32 "extendedState"
 
       val projectManager = ProjectManager.getInstanceIfCreated() ?: return
       val openProjects = projectManager.openProjects
-      // do not delete info file if ProjectManager not created - it means that it was simply not loaded, so, unlikely something is changed
+      // do not delete an info file if ProjectManager not created - it means that it was simply not loaded, so, unlikely something is changed
       if (openProjects.isEmpty()) {
         if (!isUseProjectFrameAsSplash()) {
           Files.deleteIfExists(getLastProjectFrameInfoFile())
@@ -839,7 +820,7 @@ int32 "extendedState"
   }
 
   @Internal
-  fun hasCustomIcon(project: Project) = projectIconHelper.hasCustomIcon(project)
+  fun hasCustomIcon(project: Project): Boolean = projectIconHelper.hasCustomIcon(project)
 }
 
 private fun fireChangeEvent() {
@@ -862,11 +843,12 @@ private fun readProjectName(path: String): String {
   val file = try {
     Path.of(path)
   }
-  catch (e: InvalidPathException) {
+  catch (_: InvalidPathException) {
     return path
   }
 
-  return JpsPathUtil.readProjectName(file.resolve(Project.DIRECTORY_STORE_FOLDER)) ?: PathUtilRt.getFileName(path)
+  val storePath = ProjectCoreUtil.getProjectStoreDirectory(file)
+  return JpsPathUtil.readProjectName(storePath) ?: PathUtilRt.getFileName(path)
 }
 
 private fun getLastProjectFrameInfoFile() = appSystemDir.resolve("lastProjectFrameInfo")
@@ -917,11 +899,11 @@ private fun validateRecentProjects(modCounter: LongAdder, map: MutableMap<String
   }
 }
 
-internal fun getProjectNameOnlyByPath(path: String): ProjectNameOnlyByPath {
+internal fun getProjectNameOnlyByPath(path: String): String {
   val name = PathUtilRt.getFileName(path)
-  return ProjectNameOnlyByPath(if (path.endsWith(".ipr")) FileUtilRt.getNameWithoutExtension(name) else name)
+  return if (path.endsWith(".ipr")) FileUtilRt.getNameWithoutExtension(name) else name
 }
 
 @JvmInline
 @Internal
-value class ProjectNameOnlyByPath(val nameOnlyByProjectPath: String)
+value class ProjectNameOrPathIfNotYetComputed(val nameOnlyByProjectPath: String)

@@ -315,6 +315,8 @@ object PluginManagerCore {
     if (isUnitTestMode || !GraphicsEnvironment.isHeadless()) {
       if (!isUnitTestMode) {
         logger.warn(logMessage)
+      }else{
+        logger.info(logMessage)
       }
       @Suppress("HardCodedStringLiteral")
       return (globalErrorsSuppliers.asSequence() + loadingErrors.asSequence().filter(PluginLoadingError::isNotifyUser).map(PluginLoadingError::detailedMessageSupplier))
@@ -632,7 +634,7 @@ object PluginManagerCore {
       }
     }
 
-    val additionalErrors = pluginSetBuilder.computeEnabledModuleMap { descriptor ->
+    val additionalErrors = pluginSetBuilder.computeEnabledModuleMap(disabler = { descriptor ->
       val disabledPlugins = context.disabledPlugins
       val loadingError = pluginSetBuilder.initEnableState(descriptor, idMap, disabledPlugins, pluginErrorsById)
       if (loadingError != null) {
@@ -640,7 +642,7 @@ object PluginManagerCore {
       }
       descriptor.isEnabled = descriptor.isEnabled() && loadingError == null && !context.expiredPlugins.contains(descriptor.getPluginId())
       !descriptor.isEnabled()
-    }
+    })
     for (loadingError in additionalErrors) {
       registerLoadingError(loadingError)
     }

@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.projectRoots;
 
 import com.intellij.openapi.extensions.ExtensionPointName;
@@ -8,21 +8,26 @@ import com.intellij.openapi.project.Project;
 import com.intellij.openapi.project.ProjectBundle;
 import com.intellij.openapi.roots.OrderRootType;
 import com.intellij.openapi.util.Comparing;
+import com.intellij.openapi.util.Key;
 import com.intellij.openapi.util.NlsContexts;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.util.Consumer;
 import com.intellij.util.containers.ContainerUtil;
+import com.intellij.util.keyFMap.KeyFMap;
 import org.jdom.Element;
 import org.jetbrains.annotations.Nls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.Unmodifiable;
 
 import javax.swing.*;
 import java.io.File;
+import java.nio.file.Path;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
+
 
 /**
  * Inherit from this class and register implementation as {@code sdkType} extension in plugin.xml to provide a custom type of
@@ -35,11 +40,22 @@ public abstract class SdkType implements SdkTypeId {
 
   private static final Comparator<Sdk> ALPHABETICAL_COMPARATOR = (sdk1, sdk2) -> StringUtil.compare(sdk1.getName(), sdk2.getName(), true);
 
+  public static final Key<String> HOMEPATH_KEY = new Key<>("sdk.homepath");
+  public static final Key<String> VERSION_KEY = new Key<>("sdk.version");
+  public static final Key<Boolean> IS_SYMLINK_KEY = new Key<>("sdk.is.symlink");
+
   private final String myName;
 
   public SdkType(@NotNull String name) {
     myName = name;
   }
+
+  /**
+   * @deprecated Please use {@link SdkType#suggestHomePath(Path)}.
+   * Sometimes a project is not located on the same file system where the IDE is running, and in this case
+   */
+  @Deprecated
+  public abstract @Nullable String suggestHomePath();
 
   /**
    * Returns a recommended starting path for a file chooser (where SDKs of this type are usually may be found),
@@ -50,9 +66,15 @@ public abstract class SdkType implements SdkTypeId {
    * <p/>
    * This method should work fast and allow running from the EDT thread. See the {@link #suggestHomePaths()}
    * for more advanced scenarios
+   *
+   * @param path Any path which belongs to the file system where the search for SDK should occur.
+   *             It can be any local path, but when JDK should be searched for in a containerized environment,
+   *             then it should be a path pointing to somewhere within that environment.
    * @see #suggestHomePaths()
    */
-  public abstract @Nullable String suggestHomePath();
+  public @Nullable String suggestHomePath(@NotNull Path path) {
+    return suggestHomePath();
+  }
 
   /**
    * Returns a list of all valid SDKs found on this host.
@@ -63,10 +85,40 @@ public abstract class SdkType implements SdkTypeId {
    * for possible interruption request. It is not recommended to call this method from a ETD thread. See
    * an alternative {@link #suggestHomePath()} method for EDT-friendly calls.
    * @see #suggestHomePath()
+   *
+   * @deprecated Use {@link #suggestHomePaths(Project)}
    */
-  public @NotNull Collection<String> suggestHomePaths() {
+  @Deprecated
+  public @Unmodifiable @NotNull Collection<String> suggestHomePaths() {
     String home = suggestHomePath();
     return ContainerUtil.createMaybeSingletonList(home);
+  }
+
+  /**
+   * Returns a list of all valid SDKs found on the host where {@code project} is located.
+   * <p/>
+   * E.g. for Python SDK on Unix the method may return {@code ["/usr/bin/python2", "/usr/bin/python3"]}.
+   * <p/>
+   * This method may take significant time to execute. The implementation may check {@link ProgressManager#checkCanceled()}
+   * for possible interruption request. It is not recommended to call this method from a ETD thread. See
+   * an alternative {@link #suggestHomePath()} method for EDT-friendly calls.
+   */
+  public @Unmodifiable @NotNull Collection<String> suggestHomePaths(@Nullable Project project) {
+    return suggestHomePaths();
+  }
+
+  /**
+   * Returns a list of all valid SDKs found on the host where {@code project} is located, with additional information.
+   * Use {@link #suggestHomePaths(Project)} to only collect paths.
+   */
+  public @Unmodifiable @NotNull Collection<KeyFMap> collectSdkDetails(@Nullable Project project) {
+    return ContainerUtil.map(suggestHomePaths(project), homePath -> {
+      var info = KeyFMap.EMPTY_MAP
+        .plus(HOMEPATH_KEY, homePath);
+      var version = getVersionString(homePath);
+      if (version != null) info = info.plus(VERSION_KEY, version);
+      return info;
+    });
   }
 
   /**

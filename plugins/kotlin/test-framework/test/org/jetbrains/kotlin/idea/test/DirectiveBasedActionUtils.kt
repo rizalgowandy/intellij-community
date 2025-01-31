@@ -5,12 +5,14 @@ package org.jetbrains.kotlin.idea.test
 import com.intellij.codeInsight.CodeInsightBundle
 import com.intellij.codeInsight.daemon.impl.DaemonProgressIndicator
 import com.intellij.codeInsight.intention.IntentionAction
+import com.intellij.codeInsight.intention.PriorityAction
 import com.intellij.codeInspection.InspectionManager
 import com.intellij.codeInspection.ProblemDescriptor
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.psi.PsiFile
 import com.intellij.testFramework.UsefulTestCase
 import com.intellij.testFramework.assertEqualsToFile
+import junit.framework.TestCase
 import org.jetbrains.kotlin.diagnostics.Severity
 import org.jetbrains.kotlin.diagnostics.rendering.DefaultErrorMessages
 import org.jetbrains.kotlin.idea.base.test.InTextDirectivesUtils
@@ -23,9 +25,13 @@ import kotlin.test.assertTrue
 
 
 object DirectiveBasedActionUtils {
-    const val DISABLE_ERRORS_DIRECTIVE: String = "// DISABLE-ERRORS"
-    const val DISABLE_WARNINGS_DIRECTIVE: String = "// DISABLE-WARNINGS"
-    const val ENABLE_WARNINGS_DIRECTIVE: String = "// ENABLE-WARNINGS"
+    const val DISABLE_ERRORS_DIRECTIVE: String = "// DISABLE_ERRORS"
+    const val DISABLE_WARNINGS_DIRECTIVE: String = "// DISABLE_WARNINGS"
+    const val ENABLE_WARNINGS_DIRECTIVE: String = "// ENABLE_WARNINGS"
+    const val PRIORITY_DIRECTIVE = "PRIORITY"
+
+    const val ERROR_DIRECTIVE: String = "// ERROR:"
+    const val AFTER_ERROR_DIRECTIVE: String = "// AFTER_ERROR:"
 
     /**
      * If present in the test data file, checks that
@@ -35,12 +41,16 @@ object DirectiveBasedActionUtils {
      */
     const val ACTION_DIRECTIVE: String = "// ACTION:"
 
-    fun checkForUnexpectedErrors(file: KtFile, diagnosticsProvider: (KtFile) -> Diagnostics = { it.analyzeWithContent().diagnostics }) {
+    fun checkForUnexpectedErrors(
+        file: KtFile,
+        directive: String = ERROR_DIRECTIVE,
+        diagnosticsProvider: (KtFile) -> Diagnostics = { it.analyzeWithContent().diagnostics }
+    ) {
         if (InTextDirectivesUtils.findLinesWithPrefixesRemoved(file.text, DISABLE_ERRORS_DIRECTIVE).isNotEmpty()) {
             return
         }
 
-        checkForUnexpected(file, diagnosticsProvider, "// ERROR:", "errors", Severity.ERROR)
+        checkForUnexpected(file, diagnosticsProvider, directive, "errors", Severity.ERROR)
     }
 
     fun checkForUnexpectedWarnings(
@@ -79,7 +89,7 @@ object DirectiveBasedActionUtils {
 
         UsefulTestCase.assertOrderedEquals(
             "All actual $name should be mentioned in test data with '$directive' directive. " +
-                    "But no unnecessary $name should be me mentioned, file:\n${file.text}",
+                    "But no unnecessary $name should be mentioned, file:\n${file.text}",
             actual,
             expected,
         )
@@ -126,7 +136,7 @@ object DirectiveBasedActionUtils {
 
         KotlinLightCodeInsightFixtureTestCaseBase.assertOrderedEquals(
             "All actual $name should be mentioned in test data with '$directive' directive. " +
-                    "But no unnecessary $name should be me mentioned, file:\n${file.text}",
+                    "But no unnecessary $name should be mentioned, file:\n${file.text}",
             actual,
             expected,
         )
@@ -173,6 +183,18 @@ object DirectiveBasedActionUtils {
                 "Some unexpected actions available at current position. Use '$ACTION_DIRECTIVE' directive\n",
                 actualActionsDirectives,
                 expectedDirectives
+            )
+        }
+    }
+
+    fun checkPriority(contents: String, action: Any) {
+        val priorityName = InTextDirectivesUtils.findStringWithPrefixes(contents, "// $PRIORITY_DIRECTIVE: ")
+        if (priorityName != null) {
+            val expectedPriority = enumValueOf<PriorityAction.Priority>(priorityName)
+            val actualPriority = (action as? PriorityAction)?.priority
+            TestCase.assertTrue(
+                "Expected action priority: $expectedPriority\nActual priority: $actualPriority",
+                expectedPriority == actualPriority
             )
         }
     }

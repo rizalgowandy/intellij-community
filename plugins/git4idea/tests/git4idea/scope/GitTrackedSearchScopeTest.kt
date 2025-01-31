@@ -1,7 +1,7 @@
 // Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package git4idea.scope
 
-import git4idea.index.vfs.filePath
+import git4idea.repo.GitRepositoryFiles.GITIGNORE
 import git4idea.search.GitTrackedSearchScope
 import git4idea.test.GitSingleRepoTest
 import git4idea.test.add
@@ -19,14 +19,10 @@ class GitTrackedSearchScopeTest : GitSingleRepoTest() {
 
   fun `test untracked scope is updated`() {
     val relativePaths = listOf("file", "file2")
-    val files = relativePaths.map {
-      repo.root.createFile(it)
-    }
+    createFileStructure(tracked = relativePaths, untracked = emptyList())
 
-    getGitUntrackedSearchScope().assertScope(shouldNotContain = relativePaths)
-    GitFileUtils.addPaths(project, repo.root, files.map { it.filePath() }, true)
     getGitUntrackedSearchScope().assertScope(shouldContain = relativePaths)
-    GitFileUtils.deleteFilesFromCache(project, repo.root, files)
+    GitFileUtils.deleteFilesFromCache(project, repo.root, relativePaths.map { repo.root.findFileByRelativePath(it) })
     getGitUntrackedSearchScope().assertScope(shouldNotContain = relativePaths)
   }
 
@@ -34,6 +30,13 @@ class GitTrackedSearchScopeTest : GitSingleRepoTest() {
     val file = repo.root.parent.createFile("next-to-repo")
     val scope = getGitUntrackedSearchScope()
     assertFalse(scope.isTracked(file))
+  }
+
+  fun `test ignored files are not in scope`() {
+    val ignoredFile = repo.root.createFile("ignored")
+    repo.root.createFile(GITIGNORE, ignoredFile.name)
+
+    assertFalse(getGitUntrackedSearchScope().isTracked(ignoredFile))
   }
 
   private fun getGitUntrackedSearchScope(): GitTrackedSearchScope {

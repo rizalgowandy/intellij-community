@@ -5,7 +5,6 @@ package org.jetbrains.kotlin.idea.quickfix
 import com.intellij.codeInsight.daemon.quickFix.ActionHint
 import com.intellij.codeInsight.intention.IntentionAction
 import com.intellij.codeInsight.intention.IntentionActionDelegate
-import com.intellij.codeInsight.intention.PriorityAction
 import com.intellij.codeInsight.intention.impl.ShowIntentionActionsHandler
 import com.intellij.codeInsight.intention.impl.config.IntentionManagerSettings
 import com.intellij.codeInspection.SuppressableProblemGroup
@@ -42,6 +41,7 @@ import org.junit.Assert
 import org.junit.ComparisonFailure
 import java.io.File
 import java.nio.file.Paths
+import java.util.Locale
 
 abstract class AbstractQuickFixTest : KotlinLightCodeInsightFixtureTestCase(), QuickFixTest {
     companion object {
@@ -51,7 +51,6 @@ abstract class AbstractQuickFixTest : KotlinLightCodeInsightFixtureTestCase(), Q
         const val FIXTURE_CLASS_DIRECTIVE = "FIXTURE_CLASS"
         const val SHOULD_FAIL_WITH_DIRECTIVE = "SHOULD_FAIL_WITH"
         const val FORCE_PACKAGE_FOLDER_DIRECTIVE = "FORCE_PACKAGE_FOLDER"
-        const val PRIORITY_DIRECTIVE = "PRIORITY"
         const val K1_TOOL_DIRECTIVE = "K1_TOOL:"
         const val K2_TOOL_DIRECTIVE = "K2_TOOL:"
 
@@ -181,7 +180,7 @@ abstract class AbstractQuickFixTest : KotlinLightCodeInsightFixtureTestCase(), Q
     }
 
     override fun getProjectDescriptor(): LightProjectDescriptor =
-        if ("createfromusage" in testDataDirectory.path.toLowerCase()) {
+        if ("createfromusage" in testDataDirectory.path.lowercase(Locale.getDefault())) {
             // TODO: WTF
             KotlinWithJdkAndRuntimeLightProjectDescriptor.getInstance()
         } else {
@@ -252,8 +251,11 @@ abstract class AbstractQuickFixTest : KotlinLightCodeInsightFixtureTestCase(), Q
 
             val hint = myFixture.file.actionHint(contents.replace("\${file}", fileName, ignoreCase = true))
             actionHint = hint
-            val intention = runInEdtAndGet { findActionWithText(hint.expectedText) }
-            if (hint.shouldPresent()) {
+
+            val actionShouldBeAvailable = hint.shouldPresent()
+            val intention = runInEdtAndGet { findActionWithText(hint.expectedText, acceptMatchByFamilyName = !actionShouldBeAvailable) }
+
+            if (actionShouldBeAvailable) {
                 if (intention == null) {
                     fail(
                         "Action with text '" + hint.expectedText + "' not found\n${myFixture.availableIntentions.size} available actions:\n" +
@@ -314,15 +316,8 @@ abstract class AbstractQuickFixTest : KotlinLightCodeInsightFixtureTestCase(), Q
 
     private fun applyAction(contents: String, hint: ActionHint, intention: IntentionAction, fileName: String) {
         val unwrappedIntention = unwrapIntention(intention)
-        val priorityName = InTextDirectivesUtils.findStringWithPrefixes(contents, "// $PRIORITY_DIRECTIVE: ")
-        if (priorityName != null) {
-            val expectedPriority = enumValueOf<PriorityAction.Priority>(priorityName)
-            val actualPriority = (unwrappedIntention as? PriorityAction)?.priority
-            assertTrue(
-                "Expected action priority: $expectedPriority\nActual priority: $actualPriority",
-                expectedPriority == actualPriority
-            )
-        }
+
+        DirectiveBasedActionUtils.checkPriority(contents, unwrappedIntention)
 
         val writeActionResolveHandler: () -> Unit = {
             val intentionClassName = unwrappedIntention.javaClass.name
@@ -348,7 +343,7 @@ abstract class AbstractQuickFixTest : KotlinLightCodeInsightFixtureTestCase(), Q
             UIUtil.dispatchAllInvocationEvents()
 
             if (!shouldBeAvailableAfterExecution()) {
-                var action = findActionWithText(hint.expectedText)
+                var action = findActionWithText(hint.expectedText, acceptMatchByFamilyName = true)
                 action = if (action == null) null else IntentionActionDelegate.unwrap(action)
                 if (action != null && !Comparing.equal(element, PsiUtilBase.getElementAtCaret(editor))) {
                     fail("Action '${hint.expectedText}' (${action.javaClass}) is still available after its invocation in test " + fileName)
@@ -406,9 +401,9 @@ abstract class AbstractQuickFixTest : KotlinLightCodeInsightFixtureTestCase(), Q
         }
     }
 
-    private fun findActionWithText(text: String): IntentionAction? {
+    private fun findActionWithText(text: String, acceptMatchByFamilyName: Boolean): IntentionAction? {
         val pattern = IntentionActionNamePattern(text)
-        val intention = pattern.findActionByPattern(myFixture.availableIntentions, false)
+        val intention = pattern.findActionByPattern(myFixture.availableIntentions, acceptMatchByFamilyName)
         if (intention != null) return intention
 
         // Support warning suppression

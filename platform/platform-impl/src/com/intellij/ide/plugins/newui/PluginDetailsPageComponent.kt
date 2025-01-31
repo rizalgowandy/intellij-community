@@ -32,7 +32,6 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.util.NlsSafe
 import com.intellij.openapi.util.SystemInfo
-import com.intellij.openapi.util.registry.Registry
 import com.intellij.openapi.util.text.HtmlChunk
 import com.intellij.openapi.util.text.StringUtil
 import com.intellij.openapi.util.text.Strings
@@ -78,7 +77,6 @@ import javax.swing.plaf.TabbedPaneUI
 import javax.swing.text.View
 import javax.swing.text.html.ImageView
 import javax.swing.text.html.ParagraphView
-import kotlin.collections.set
 import kotlin.coroutines.coroutineContext
 
 @Internal
@@ -173,7 +171,8 @@ class PluginDetailsPageComponent @JvmOverloads constructor(
 
   companion object {
     @JvmStatic
-    fun isMultiTabs(): Boolean = Registry.`is`("plugins.show.multi.tabs", true)
+    @Deprecated("Always true")
+    fun isMultiTabs(): Boolean = true
 
     @JvmStatic
     fun createDescriptionComponent(imageViewHandler: Consumer<in View>?): JEditorPane {
@@ -1239,12 +1238,14 @@ class PluginDetailsPageComponent @JvmOverloads constructor(
       return
     }
     if (productCode == null) {
-      if (updateDescriptor != null && updateDescriptor!!.productCode != null &&
-          !LicensePanel.isEA2Product(updateDescriptor!!.productCode)
+      val update = updateDescriptor
+      if (update != null && update.productCode != null &&
+          !LicensePanel.isEA2Product(update.productCode) &&
+          !LicensePanel.shouldSkipPluginLicenseDescriptionPublishing(update)
       ) {
-        licensePanel.setText(IdeBundle.message("label.next.plugin.version.is"), true, false)
-        licensePanel.showBuyPlugin({ updateDescriptor }, true)
-        licensePanel.isVisible = true
+        licensePanel.showBuyPluginWithText(IdeBundle.message("label.next.plugin.version.is"), true, false,
+                                           { update }, true,
+                                           true)
       }
       else {
         licensePanel.hideWithChildren()
@@ -1253,23 +1254,24 @@ class PluginDetailsPageComponent @JvmOverloads constructor(
     else if (isMarketplace) {
       var requiresCommercialIde = false
 
-      if (descriptor is PluginNode) {
+      val message: String = if (descriptor is PluginNode) {
         val ideProductCode = ApplicationInfoImpl.getShadowInstanceImpl().build.productCode
 
         val trialPeriod = descriptor.getTrialPeriodByProductCode(ideProductCode)
         val isFreemium = descriptor.tags.contains(Tags.Freemium.name)
         requiresCommercialIde = descriptor.suggestedCommercialIde != null
 
-        licensePanel.setText(getPaidPluginLicenseText(isFreemium, trialPeriod), false, false)
+        getPaidPluginLicenseText(isFreemium, trialPeriod)
       }
       else {
-        licensePanel.setText(IdeBundle.message("label.install.paid.without.trial"), false, false)
+        IdeBundle.message("label.install.paid.without.trial")
       }
 
-      licensePanel.showBuyPlugin({ descriptor }, false)
-
-      // if the descriptor requires a commercial IDE, we do not show trial/price message
-      licensePanel.isVisible = !requiresCommercialIde
+      licensePanel.showBuyPluginWithText(
+        message, false, false,
+        { descriptor }, false,
+        !requiresCommercialIde // if the descriptor requires a commercial IDE, we do not show trial/price message
+      )
     }
     else {
       val instance = LicensingFacade.getInstance()

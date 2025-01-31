@@ -1,10 +1,10 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 
 package com.intellij.psi.impl.source.tree.injected;
 
 import com.intellij.injected.editor.DocumentWindow;
 import com.intellij.openapi.application.ApplicationManager;
-import com.intellij.openapi.editor.*;
+import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.editor.impl.EditorImpl;
 import com.intellij.openapi.util.Ref;
 import com.intellij.psi.PsiFile;
@@ -18,9 +18,12 @@ final class InjectedEditorWindowTrackerImpl extends InjectedEditorWindowTracker 
   private final Collection<EditorWindowImpl> allEditors = new UnsafeWeakList<>(); // guarded by allEditors
 
   @NotNull
-  Editor createEditor(final @NotNull DocumentWindowImpl documentRange,
-                      final @NotNull EditorImpl editor,
+  @Override
+  protected Editor createEditor(final @NotNull DocumentWindow documentRange,
+                      final @NotNull Editor editor,
                       final @NotNull PsiFile injectedFile) {
+    if (!(editor instanceof EditorImpl editorImpl)) return editor;
+    var documentRangeImpl = (DocumentWindowImpl)documentRange;
     assert documentRange.isValid();
     assert injectedFile.isValid();
     Ref<EditorWindowImpl> editorWindow = Ref.create();
@@ -33,8 +36,8 @@ final class InjectedEditorWindowTrackerImpl extends InjectedEditorWindowTracker 
           }
         }
       }
-      editor.executeNonCancelableBlock(()-> {
-        EditorWindowImpl newEditorWindow = new EditorWindowImpl(documentRange, editor, injectedFile, documentRange.isOneLine());
+      editorImpl.executeNonCancelableBlock(()-> {
+        EditorWindowImpl newEditorWindow = new EditorWindowImpl(documentRangeImpl, editorImpl, injectedFile, documentRange.isOneLine());
         editorWindow.set(newEditorWindow);
         allEditors.add(newEditorWindow);
         newEditorWindow.assertValid();
@@ -44,7 +47,7 @@ final class InjectedEditorWindowTrackerImpl extends InjectedEditorWindowTracker 
   }
 
   @Override
-  void disposeInvalidEditors() {
+  protected void disposeInvalidEditors() {
     ApplicationManager.getApplication().assertWriteAccessAllowed();
     synchronized (allEditors) {
       Iterator<EditorWindowImpl> iterator = allEditors.iterator();
@@ -59,7 +62,7 @@ final class InjectedEditorWindowTrackerImpl extends InjectedEditorWindowTracker 
   }
 
   @Override
-  void disposeEditorFor(@NotNull DocumentWindow documentWindow) {
+  protected void disposeEditorFor(@NotNull DocumentWindow documentWindow) {
     synchronized (allEditors) {
       for (Iterator<EditorWindowImpl> iterator = allEditors.iterator(); iterator.hasNext(); ) {
         EditorWindowImpl editor = iterator.next();

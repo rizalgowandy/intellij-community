@@ -1,3 +1,4 @@
+<!--suppress PluginXmlRegistrationCheck -->
 <idea-plugin xmlns:xi="http://www.w3.org/2001/XInclude">
   <module value="com.intellij.modules.xml"/>
 
@@ -281,8 +282,6 @@
     <lang.foldingBuilder language="XHTML" implementationClass="com.intellij.lang.xml.XmlFoldingBuilder"/>
 
     <codeInsight.parameterInfo language="XML" implementationClass="com.intellij.codeInsight.hint.api.impls.XmlParameterInfoHandler"/>
-    <codeInsight.parameterInfo language="HTML" implementationClass="com.intellij.codeInsight.hint.api.impls.XmlParameterInfoHandler"/>
-    <codeInsight.parameterInfo language="XHTML" implementationClass="com.intellij.codeInsight.hint.api.impls.XmlParameterInfoHandler"/>
 
     <codeInsight.wordCompletionFilter language="XML" implementationClass="com.intellij.lang.xml.XmlWordCompletionFilter"/>
     <codeInsight.wordCompletionFilter language="HTML" implementationClass="com.intellij.lang.xml.XmlWordCompletionFilter"/>
@@ -324,7 +323,6 @@
     <extendWordSelectionHandler implementation="com.intellij.codeInsight.editorActions.XmlElementSelectioner"/>
     <extendWordSelectionHandler id="xmlTokenSelectioner" implementation="com.intellij.codeInsight.editorActions.XmlTokenSelectioner"/>
     <extendWordSelectionHandler implementation="com.intellij.codeInsight.editorActions.XmlLineSelectioner"/>
-
 
     <typedHandler implementation="com.intellij.codeInsight.editorActions.XmlSlashTypedHandler" id="xmlSlash"/>
     <typedHandler implementation="com.intellij.codeInsight.editorActions.XmlEqTypedHandler" id="xmlEq"/>
@@ -384,8 +382,7 @@
 
     <inspection.basicVisitor class="com.intellij.psi.XmlElementVisitor"/>
 
-    <lang.floatingToolbarCustomizer language="XML"
-                                    implementationClass="com.intellij.ui.codeFloatingToolbar.FloatingToolbarCustomizer$MinimalGroup"/>
+    <lang.floatingToolbar language="XML" minimal="true"/>
 
     <localInspection language="XML" shortName="CheckTagEmptyBody" enabledByDefault="true" level="WARNING"
                      bundle="messages.XmlBundle" key="xml.inspections.check.tag.empty.body"
@@ -701,6 +698,11 @@
     <xml.xmlExtension implementation="com.intellij.html.webSymbols.WebSymbolsXmlExtension" id="web-symbols"
                       order="before html, after react"/>
 
-    <postStartupActivity implementation="com.intellij.javaee.PsiExternalResourceNotifier" />
+    <xml.autoPopupEnabler implementation="com.intellij.xml.microservices.UrlReferencesXmlAutoPopupEnabler"/>
   </extensions>
+
+  <projectListeners>
+    <listener class="com.intellij.xml.impl.PsiExternalResourceChangeListener"
+              topic="com.intellij.javaee.ExternalResourceListener"/>
+  </projectListeners>
 </idea-plugin>

@@ -4,7 +4,7 @@ package com.intellij.ui.jcef;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.util.SystemInfo;
 import com.intellij.ui.JBColor;
-import org.cef.CefSettings;
+import com.intellij.ui.jcef.menu.CefContextMenuRunner;
 import org.cef.browser.CefBrowser;
 import org.cef.handler.CefFocusHandler;
 import org.cef.handler.CefFocusHandlerAdapter;
@@ -71,23 +71,40 @@ public class JBCefBrowser extends JBCefBrowserBase {
           }
           return true; // suppress focusing the browser on navigation events
         }
+
+        if (isOffScreenRendering()) {
+          return false;
+        }
+
         if (!browser.getUIComponent().hasFocus()) {
           if (SystemInfo.isLinux) {
-            if (isOffScreenRendering()) {
-              browser.getUIComponent().requestFocusInWindow();
-            }
-            else {
-              browser.getUIComponent().requestFocus();
-            }
+            browser.getUIComponent().requestFocus();
           }
           else {
-            if (!SystemInfo.isMac || !isOffScreenRendering())
-              browser.getUIComponent().requestFocusInWindow();
+            browser.getUIComponent().requestFocusInWindow();
           }
         }
         return false;
       }
     }, myCefBrowser);
+
+    if (isOffScreenRendering()) {
+      CefContextMenuRunner contextMenuRunner = new CefContextMenuRunner();
+      myCefClient.addContextMenuHandler(contextMenuRunner, myCefBrowser);
+
+      myCefBrowser.getUIComponent().addFocusListener(new FocusAdapter() {
+        @Override
+        public void focusGained(FocusEvent e) {
+            myCefBrowser.setFocus(true);
+        }
+        @Override
+        public void focusLost(FocusEvent e) {
+          if (!contextMenuRunner.isShowing())  {
+            myCefBrowser.setFocus(false);
+          }
+        }
+      });
+    }
   }
 
   private static final @NotNull List<Consumer<? super JBCefBrowser>> ourOnBrowserMoveResizeCallbacks =
@@ -165,7 +182,7 @@ public class JBCefBrowser extends JBCefBrowserBase {
 
   private @NotNull JPanel createComponent(boolean isMouseWheelEventEnabled) {
     Component uiComp = getCefBrowser().getUIComponent();
-    JPanel resultPanel = new MyPanel(uiComp, isMouseWheelEventEnabled);
+    MyPanel resultPanel = new MyPanel(uiComp, isMouseWheelEventEnabled);
 
     resultPanel.setBackground(getBackgroundColor());
     resultPanel.putClientProperty(JBCEFBROWSER_INSTANCE_PROP, this);
@@ -210,6 +227,28 @@ public class JBCefBrowser extends JBCefBrowserBase {
         ourOnBrowserMoveResizeCallbacks.forEach(callback -> callback.accept(JBCefBrowser.this));
       }
     });
+
+    ApplicationManager.getApplication().getMessageBus()
+      .connect()
+      .subscribe(JBCefHealthMonitor.JBCefHealthCheckTopic.TOPIC,
+                 new JBCefHealthMonitor.JBCefHealthCheckTopic() {
+                   @Override
+                   public void onHealthHealthStatusChanged(JBCefHealthMonitor.@NotNull Status status) {
+                     SwingUtilities.invokeLater(() -> {
+                       Component panel = JBCefNotifications.createStubPanel(status);
+                       if (panel != null) {
+                         resultPanel.setStubPanel(panel);
+                       }
+                     });
+                   }
+                 });
+
+    JBCefHealthMonitor.Status status = JBCefHealthMonitor.getInstance().getStatus();
+    Component stubPanel = JBCefNotifications.createStubPanel(status);
+    if (stubPanel != null) {
+      resultPanel.setStubPanel(stubPanel);
+    }
+
     return resultPanel;
   }
 
@@ -315,18 +354,6 @@ public class JBCefBrowser extends JBCefBrowserBase {
       if (isMouseWheelEventEnabled) {
         enableEvents(AWTEvent.MOUSE_WHEEL_EVENT_MASK);
       }
-
-      ApplicationManager.getApplication().executeOnPooledThread(() -> {
-        CefSettings settings = JBCefApp.getInstance().getCefSettings();
-        if (settings != null && !settings.no_sandbox && JBCefAppArmorUtils.areUnprivilegedUserNamespacesRestricted()) {
-          SwingUtilities.invokeLater(() -> {
-            removeAll();
-            add(JBCefAppArmorUtils.getUnprivilegedUserNamespacesRestrictedStubPanel(), BorderLayout.CENTER);
-            revalidate();
-            repaint();
-          });
-        }
-      });
     }
 
     @Override
@@ -364,6 +391,13 @@ public class JBCefBrowser extends JBCefBrowserBase {
 
     public @NotNull JBCefBrowser getJBCefBrowser() {
       return JBCefBrowser.this;
+    }
+
+    private void setStubPanel(@NotNull Component stubPanel) {
+      removeAll();
+      add(stubPanel);
+      revalidate();
+      repaint();
     }
   }
 }

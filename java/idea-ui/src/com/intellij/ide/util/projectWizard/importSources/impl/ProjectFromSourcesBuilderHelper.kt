@@ -13,6 +13,7 @@ import com.intellij.ide.util.projectWizard.importSources.impl.ProjectFromSources
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.WriteAction
 import com.intellij.openapi.application.writeAction
+import com.intellij.openapi.application.writeIntentReadAction
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.module.ModifiableModuleModel
 import com.intellij.openapi.module.Module
@@ -69,7 +70,7 @@ internal class ProjectFromSourcesBuilderHelper(private val project: Project,
       }
     }
     catch (e: Exception) {
-      LOG.info(e)
+      LOG.error("Cannot commit", e)
       Messages.showErrorDialog(IdeCoreBundle.message("error.adding.module.to.project", e.message),
                                IdeCoreBundle.message("title.add.module"))
     }
@@ -139,7 +140,9 @@ internal class ProjectFromSourcesBuilderHelper(private val project: Project,
                            projectLibs: Map<LibraryDescriptor, Library>): Module {
     val moduleFilePath = descriptor.computeModuleFilePath()
     withContext(Dispatchers.EDT) {
-      ModuleBuilder.deleteModuleFile(moduleFilePath)
+      writeIntentReadAction {
+        ModuleBuilder.deleteModuleFile(moduleFilePath)
+      }
     }
 
     val module = moduleModel.newModule(moduleFilePath, descriptor.moduleType.id)

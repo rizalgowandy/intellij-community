@@ -45,17 +45,15 @@ import java.awt.Component
 import java.awt.Dimension
 import java.awt.Insets
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 import java.util.function.Supplier
 import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.ScrollPaneConstants
 
+
 @Suppress("OVERRIDE_DEPRECATION")
 internal class ProjectsTabFactory : WelcomeTabFactory {
-  companion object {
-    const val PRIMARY_BUTTONS_NUM: Int = 3
-  }
-
   override fun createWelcomeTab(parentDisposable: Disposable): WelcomeScreenTab = ProjectsTab(parentDisposable)
 }
 
@@ -197,7 +195,7 @@ internal class ProjectsTab(private val parentDisposable: Disposable) : DefaultWe
   }
 
   private fun createEmptyStatePanel(): JComponent {
-    val emptyStateProjectsPanel = EmptyStateProjectsPanel(parentDisposable)
+    val emptyStateProjectsPanel = emptyStateProjectPanel(parentDisposable)
     initDnD(emptyStateProjectsPanel)
     return emptyStateProjectsPanel
   }
@@ -216,16 +214,15 @@ internal class ProjectsTab(private val parentDisposable: Disposable) : DefaultWe
     val actionManager = ActionManager.getInstance()
     val baseGroup = actionManager.getAction(IdeActions.GROUP_WELCOME_SCREEN_QUICKSTART_PROJECTS_STATE) as ActionGroup
     val toolbarGroup = object : ActionGroupWrapper(baseGroup) {
+      val wrappers = ConcurrentHashMap<AnAction, AnAction>()
       override fun postProcessVisibleChildren(e: AnActionEvent, visibleChildren: List<AnAction>): List<AnAction> {
         val mapped = visibleChildren.mapIndexed { index, action ->
           when {
-            index >= ProjectsTabFactory.PRIMARY_BUTTONS_NUM -> action
+            index >= getWelcomeScreenPrimaryButtonsNum() -> action
             action is ActionGroup && action is ActionsWithPanelProvider -> {
-              val p = e.updateSession.presentation(action)
-              val wrapper = p.getClientProperty(ActionUtil.INLINE_ACTIONS)?.first()
-                            ?: ActionGroupPanelWrapper.wrapGroups(action, parentDisposable).also {
-                              p.putClientProperty(ActionUtil.INLINE_ACTIONS, listOf(it))
-                            }
+              val wrapper = wrappers.getOrPut(action) {
+                ActionGroupPanelWrapper.wrapGroups(action, parentDisposable)
+              }
               e.updateSession.presentation(wrapper)
               wrapper
             }
@@ -233,9 +230,17 @@ internal class ProjectsTab(private val parentDisposable: Disposable) : DefaultWe
               val children = e.updateSession.children(action).toList()
               when {
                 children.isEmpty() -> action
-                else -> children.first().also {
-                  e.updateSession.presentation(it).putClientProperty(
+                else -> {
+                  val first = children.first()
+                  val wrapper = when {
+                    first is ActionGroup && first is ActionsWithPanelProvider -> wrappers.getOrPut(first) {
+                      ActionGroupPanelWrapper.wrapGroups(first, parentDisposable)
+                    }
+                    else -> first
+                  }
+                  e.updateSession.presentation(wrapper).putClientProperty(
                     ActionUtil.INLINE_ACTIONS, children.subList(1, children.size))
+                  wrapper
                 }
               }
             }
@@ -251,14 +256,16 @@ internal class ProjectsTab(private val parentDisposable: Disposable) : DefaultWe
     }
     val toolbar: ActionToolbarImpl = object : ActionToolbarImpl(ActionPlaces.WELCOME_SCREEN, toolbarGroup, true) {
       override fun isSecondaryAction(action: AnAction, actionIndex: Int): Boolean {
-        return actionIndex >= ProjectsTabFactory.PRIMARY_BUTTONS_NUM
+        return actionIndex >= getWelcomeScreenPrimaryButtonsNum()
       }
 
-      override fun createToolbarButton(action: AnAction,
-                                       look: ActionButtonLook?,
-                                       place: String,
-                                       presentation: Presentation,
-                                       minimumSize: Supplier<out Dimension>): ActionButton {
+      override fun createToolbarButton(
+        action: AnAction,
+        look: ActionButtonLook?,
+        place: String,
+        presentation: Presentation,
+        minimumSize: Supplier<out Dimension>,
+      ): ActionButton {
         return super.createToolbarButton(action, look, place, presentation, minimumSize).apply {
           isFocusable = true
         }

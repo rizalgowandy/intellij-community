@@ -36,10 +36,13 @@ import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.psi.util.PsiUtil;
 import com.intellij.util.ThreeState;
 import com.intellij.util.concurrency.ThreadingAssertions;
+import com.intellij.util.concurrency.annotations.RequiresBackgroundThread;
+import com.intellij.util.concurrency.annotations.RequiresReadLock;
 import com.intellij.util.containers.ContainerUtil;
 import com.siyeh.ig.psiutils.ImportUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.Unmodifiable;
 
 import java.util.*;
 import java.util.regex.Matcher;
@@ -61,6 +64,8 @@ public abstract class ImportClassFixBase<T extends PsiElement, R extends PsiRefe
   private boolean myInContent;
   private ThreeState extensionsAllowToChangeFileSilently;
 
+  @RequiresBackgroundThread
+  @RequiresReadLock
   protected ImportClassFixBase(@NotNull T referenceElement, @NotNull R reference) {
     super(referenceElement.getProject());
     myReferenceElement = referenceElement;
@@ -109,11 +114,11 @@ public abstract class ImportClassFixBase<T extends PsiElement, R extends PsiRefe
   protected abstract PsiElement getReferenceNameElement(@NotNull R reference);
   protected abstract boolean hasTypeParameters(@NotNull R reference);
 
-  public @NotNull List<? extends PsiClass> getClassesToImport() {
+  public @Unmodifiable @NotNull List<? extends PsiClass> getClassesToImport() {
     return getClassesToImport(false);
   }
 
-  public @NotNull List<? extends PsiClass> getClassesToImport(boolean acceptWrongNumberOfTypeParams) {
+  public @Unmodifiable @NotNull List<? extends PsiClass> getClassesToImport(boolean acceptWrongNumberOfTypeParams) {
     if (!acceptWrongNumberOfTypeParams && hasTypeParameters(myReference)) {
       return ContainerUtil.findAll(myClassesToImport, PsiTypeParameterListOwner::hasTypeParameters);
     }
@@ -140,12 +145,12 @@ public abstract class ImportClassFixBase<T extends PsiElement, R extends PsiRefe
     if (!myReferenceElement.isValid() || (referenceElement = myReference.getElement()) != myReferenceElement && !referenceElement.isValid()) {
       return PsiClass.EMPTY_ARRAY;
     }
-    if (myReference instanceof PsiJavaReference) {
-      JavaResolveResult result = ((PsiJavaReference)myReference).advancedResolve(true);
+    if (myReference instanceof PsiJavaReference ref) {
+      JavaResolveResult result = ref.advancedResolve(true);
       PsiElement element = result.getElement();
       // already imported
       // can happen when e.g., class name happened to be in a method position
-      if (result.isValidResult() || element instanceof PsiClass && result.getCurrentFileResolveScope() instanceof PsiImportStatement) {
+      if (element instanceof PsiClass && (result.isValidResult() || result.getCurrentFileResolveScope() instanceof PsiImportStatement)) {
         return PsiClass.EMPTY_ARRAY;
       }
     }
@@ -162,18 +167,18 @@ public abstract class ImportClassFixBase<T extends PsiElement, R extends PsiRefe
     Project project = psiFile.getProject();
 
     PsiElement parent = myReferenceElement.getParent();
-    if (parent instanceof PsiNewExpression && ((PsiNewExpression)parent).getQualifier() != null) {
+    if (parent instanceof PsiNewExpression newExpression && newExpression.getQualifier() != null) {
       return PsiClass.EMPTY_ARRAY;
     }
 
-    if (parent instanceof PsiReferenceExpression) {
-      PsiExpression expression = ((PsiReferenceExpression)parent).getQualifierExpression();
+    if (parent instanceof PsiReferenceExpression ref) {
+      PsiExpression expression = ref.getQualifierExpression();
       if (expression != null && expression != myReferenceElement) {
         return PsiClass.EMPTY_ARRAY;
       }
     }
 
-    if (psiFile instanceof PsiJavaCodeReferenceCodeFragment && !((PsiJavaCodeReferenceCodeFragment)psiFile).isClassesAccepted()) {
+    if (psiFile instanceof PsiJavaCodeReferenceCodeFragment ref && !ref.isClassesAccepted()) {
       return PsiClass.EMPTY_ARRAY;
     }
 
@@ -203,7 +208,7 @@ public abstract class ImportClassFixBase<T extends PsiElement, R extends PsiRefe
       classList = new ArrayList<>(filtered);
     }
 
-    filerByPackageName(classList, psiFile);
+    filterByPackageName(classList, psiFile);
 
     filterAlreadyImportedButUnresolved(classList, psiFile);
 
@@ -232,7 +237,7 @@ public abstract class ImportClassFixBase<T extends PsiElement, R extends PsiRefe
     return false;
   }
 
-  private void filerByPackageName(@NotNull Collection<PsiClass> classList, @NotNull PsiFile file) {
+  private void filterByPackageName(@NotNull Collection<PsiClass> classList, @NotNull PsiFile file) {
     String qualifiedName = getQualifiedName(myReferenceElement);
     String packageName = StringUtil.getPackageName(qualifiedName);
     if (!packageName.isEmpty() &&
@@ -298,7 +303,7 @@ public abstract class ImportClassFixBase<T extends PsiElement, R extends PsiRefe
     return null;
   }
 
-  protected @NotNull Collection<PsiClass> filterByContext(@NotNull Collection<PsiClass> candidates, @NotNull T referenceElement) {
+  protected @Unmodifiable @NotNull Collection<PsiClass> filterByContext(@NotNull Collection<PsiClass> candidates, @NotNull T referenceElement) {
     return candidates;
   }
 
@@ -306,7 +311,7 @@ public abstract class ImportClassFixBase<T extends PsiElement, R extends PsiRefe
 
   protected abstract String getQualifiedName(@NotNull T referenceElement);
 
-  protected static @NotNull Collection<PsiClass> filterAssignableFrom(@NotNull PsiType type, @NotNull Collection<PsiClass> candidates) {
+  protected static @Unmodifiable @NotNull Collection<PsiClass> filterAssignableFrom(@NotNull PsiType type, @NotNull Collection<PsiClass> candidates) {
     PsiClass actualClass = PsiUtil.resolveClassInClassTypeOnly(type);
     if (actualClass != null) {
       return ContainerUtil.findAll(candidates, psiClass -> InheritanceUtil.isInheritorOrSelf(actualClass, psiClass, true));

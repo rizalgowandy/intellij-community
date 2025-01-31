@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 
 package org.jetbrains.kotlin.asJava.classes;
 
@@ -655,6 +655,11 @@ public abstract class IdeLightClassesByFqNameTestGenerated extends AbstractIdeLi
             runTest(compilerTestData("compiler/testData/asJava/lightClasses/lightClassByFqName/DataClassWithCustomImplementedMembers.kt"));
         }
 
+        @TestMetadata("dataClassWithValueClass.kt")
+        public void testDataClassWithValueClass() throws Exception {
+            runTest(compilerTestData("compiler/testData/asJava/lightClasses/lightClassByFqName/dataClassWithValueClass.kt"));
+        }
+
         @TestMetadata("DefaultImplsWithTypeParameters.kt")
         public void testDefaultImplsWithTypeParameters() throws Exception {
             runTest(compilerTestData("compiler/testData/asJava/lightClasses/lightClassByFqName/DefaultImplsWithTypeParameters.kt"));
@@ -875,6 +880,21 @@ public abstract class IdeLightClassesByFqNameTestGenerated extends AbstractIdeLi
             runTest(compilerTestData("compiler/testData/asJava/lightClasses/lightClassByFqName/ValueClassInParametersWithJvmName.kt"));
         }
 
+        @TestMetadata("valueClassInsideDefaultImpl.kt")
+        public void testValueClassInsideDefaultImpl() throws Exception {
+            runTest(compilerTestData("compiler/testData/asJava/lightClasses/lightClassByFqName/valueClassInsideDefaultImpl.kt"));
+        }
+
+        @TestMetadata("valueClassInsideDelegatedClass.kt")
+        public void testValueClassInsideDelegatedClass() throws Exception {
+            runTest(compilerTestData("compiler/testData/asJava/lightClasses/lightClassByFqName/valueClassInsideDelegatedClass.kt"));
+        }
+
+        @TestMetadata("valueClassInsideStaticMembers.kt")
+        public void testValueClassInsideStaticMembers() throws Exception {
+            runTest(compilerTestData("compiler/testData/asJava/lightClasses/lightClassByFqName/valueClassInsideStaticMembers.kt"));
+        }
+
         @TestMetadata("valueClassMembers.kt")
         public void testValueClassMembers() throws Exception {
             runTest(compilerTestData("compiler/testData/asJava/lightClasses/lightClassByFqName/valueClassMembers.kt"));
@@ -908,6 +928,21 @@ public abstract class IdeLightClassesByFqNameTestGenerated extends AbstractIdeLi
         @TestMetadata("VarArgs.kt")
         public void testVarArgs() throws Exception {
             runTest(compilerTestData("compiler/testData/asJava/lightClasses/lightClassByFqName/VarArgs.kt"));
+        }
+
+        @TestMetadata("varargAndValueClass.kt")
+        public void testVarargAndValueClass() throws Exception {
+            runTest(compilerTestData("compiler/testData/asJava/lightClasses/lightClassByFqName/varargAndValueClass.kt"));
+        }
+
+        @TestMetadata("wildcardWithoutArguments.kt")
+        public void testWildcardWithoutArguments() throws Exception {
+            runTest(compilerTestData("compiler/testData/asJava/lightClasses/lightClassByFqName/wildcardWithoutArguments.kt"));
+        }
+
+        @TestMetadata("wildcardWithoutArgumentsOnType.kt")
+        public void testWildcardWithoutArgumentsOnType() throws Exception {
+            runTest(compilerTestData("compiler/testData/asJava/lightClasses/lightClassByFqName/wildcardWithoutArgumentsOnType.kt"));
         }
     }
 }

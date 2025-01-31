@@ -119,8 +119,11 @@ public class FileTypesTest extends HeavyPlatformTestCase {
       myFileTypeManager.reDetectAsync(false);
       assertNull(myFileTypeManager.findFileTypeByName("x." + MyTestFileType.EXTENSION));
       assertNull(myFileTypeManager.getExtensionMap().findByExtension(MyTestFileType.EXTENSION));
+      myFileTypeManager.myDetectionService.drainReDetectQueue();
       Disposer.dispose(myFileTypeManager);
-      Element globalStateAfter = ((FileTypeManagerImpl)FileTypeManagerEx.getInstanceEx()).getState();
+      FileTypeManagerImpl globalFileTypeManager = (FileTypeManagerImpl)FileTypeManagerEx.getInstanceEx();
+      Element globalStateAfter = globalFileTypeManager.getState();
+      globalFileTypeManager.drainReDetectQueue();
       assertEquals(JDOMUtil.writeElement(myGlobalStateBefore), JDOMUtil.writeElement(globalStateAfter));
     }
     catch (Throwable e) {
@@ -899,7 +902,7 @@ public class FileTypesTest extends HeavyPlatformTestCase {
 
           if (random.nextInt(3) == 0) {
             WriteCommandAction.writeCommandAction(getProject()).run(() -> {
-              byte[] bytes = new byte[(int)PersistentFSConstants.FILE_LENGTH_TO_CACHE_THRESHOLD + (isText ? 1 : 0)];
+              byte[] bytes = new byte[PersistentFSConstants.MAX_FILE_LENGTH_TO_CACHE + (isText ? 1 : 0)];
               Arrays.fill(bytes, (byte)' ');
               virtualFile.setBinaryContent(bytes);
             });
@@ -928,7 +931,7 @@ public class FileTypesTest extends HeavyPlatformTestCase {
     FrequentEventDetector.disableUntil(getTestRootDisposable());
 
     File f = createTempFile("xx.asd_kjf_hlk_asj_dhf",
-                            StringUtil.repeatSymbol(' ', (int)PersistentFSConstants.FILE_LENGTH_TO_CACHE_THRESHOLD - 100));
+                            StringUtil.repeatSymbol(' ', PersistentFSConstants.MAX_FILE_LENGTH_TO_CACHE - 100));
     VirtualFile virtualFile = getVirtualFile(f);
     assertEquals(PlainTextFileType.INSTANCE, getFileType(virtualFile));
     PsiFile psiFile = getPsiManager().findFile(virtualFile);

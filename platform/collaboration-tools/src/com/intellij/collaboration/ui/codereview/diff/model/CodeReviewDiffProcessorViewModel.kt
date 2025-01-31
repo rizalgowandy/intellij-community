@@ -3,6 +3,7 @@ package com.intellij.collaboration.ui.codereview.diff.model
 
 import com.intellij.collaboration.async.MappingScopedItemsContainer
 import com.intellij.collaboration.async.collectScoped
+import com.intellij.collaboration.ui.util.selectedItem
 import com.intellij.collaboration.util.ComputedResult
 import com.intellij.collaboration.util.onFailure
 import com.intellij.collaboration.util.onInProgress
@@ -15,10 +16,11 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.*
-import org.jetbrains.annotations.ApiStatus.Internal
 import java.util.concurrent.CopyOnWriteArrayList
 
-@Internal
+/**
+ * A viewmodel for a diff processor which can show multiple diffs and switch between them
+ */
 interface CodeReviewDiffProcessorViewModel<C : Any> {
   val changes: StateFlow<ComputedResult<State<C>>?>
 
@@ -37,7 +39,6 @@ interface CodeReviewDiffProcessorViewModel<C : Any> {
  * @param C change type
  * @param CVM change view model type
  */
-@Internal
 interface PreLoadingCodeReviewAsyncDiffViewModelDelegate<C : Any, CVM : AsyncDiffViewModel> {
   val changes: Flow<ComputedResult<CodeReviewDiffProcessorViewModel.State<CVM>>?>
 
@@ -49,7 +50,7 @@ interface PreLoadingCodeReviewAsyncDiffViewModelDelegate<C : Any, CVM : AsyncDif
   companion object {
     fun <D : Any, C : Any, CVM : AsyncDiffViewModel> create(
       preloadedDataFlow: Flow<ComputedResult<D>?>,
-      changesPreProcessor: Flow<(ListSelection<C>) -> ListSelection<C>>,
+      changesPreProcessor: Flow<(List<C>) -> List<C>>,
       createViewModel: CoroutineScope.(D, C) -> CVM,
     ): PreLoadingCodeReviewAsyncDiffViewModelDelegate<C, CVM> =
       PreLoadingCodeReviewAsyncDiffViewModelDelegateImpl(preloadedDataFlow, changesPreProcessor, createViewModel)
@@ -59,7 +60,7 @@ interface PreLoadingCodeReviewAsyncDiffViewModelDelegate<C : Any, CVM : AsyncDif
 @OptIn(ExperimentalCoroutinesApi::class)
 private class PreLoadingCodeReviewAsyncDiffViewModelDelegateImpl<D : Any, C : Any, CVM : AsyncDiffViewModel>(
   preloadedDataFlow: Flow<ComputedResult<D>?>,
-  private val changesPreProcessor: Flow<(ListSelection<C>) -> ListSelection<C>>,
+  private val changesPreProcessor: Flow<(List<C>) -> List<C>>,
   private val createViewModel: CoroutineScope.(D, C) -> CVM,
 ) : PreLoadingCodeReviewAsyncDiffViewModelDelegate<C, CVM> {
   private val changesToShow = MutableStateFlow(ChangesState<C>())
@@ -81,17 +82,18 @@ private class PreLoadingCodeReviewAsyncDiffViewModelDelegateImpl<D : Any, C : An
       val vmsContainer = MappingScopedItemsContainer.byEquality<C, CVM>(this) {
         createViewModel(preloadedData, it)
       }
-      var lastList: ListSelection<C> = ListSelection.empty()
+      var lastList: List<C> = emptyList()
       changesPreProcessor.collectLatest { preProcessor ->
         changesToShow.collectScoped { changesState ->
-          if (changesState.selectedChanges.list != lastList.list) {
+          if (changesState.selectedChanges.list != lastList) {
             emit(ComputedResult.loading())
-            val processedList = preProcessor(changesState.selectedChanges)
-            vmsContainer.update(processedList.list)
-            lastList = processedList
+            val processedList = preProcessor(changesState.selectedChanges.list)
+            vmsContainer.update(processedList)
+            lastList = changesState.selectedChanges.list
           }
-          val vms = vmsContainer.mappingState.value.values.toList()
-          val selectedVmIdx = lastList.selectedIndex
+          val mappingState = vmsContainer.mappingState.value
+          val vms = mappingState.values.toList()
+          val selectedVmIdx = mappingState.keys.indexOf(changesState.selectedChanges.selectedItem)
           val newState = ViewModelsState(ListSelection.createAt(vms, selectedVmIdx), changesState.scrollRequests)
           emit(ComputedResult.success(newState))
         }

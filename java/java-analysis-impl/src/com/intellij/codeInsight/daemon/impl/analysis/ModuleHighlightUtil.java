@@ -21,6 +21,7 @@ import com.intellij.openapi.util.TextRange;
 import com.intellij.openapi.util.Trinity;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.pom.java.JavaFeature;
 import com.intellij.psi.*;
 import com.intellij.psi.PsiPackageAccessibilityStatement.Role;
 import com.intellij.psi.impl.IncompleteModelUtil;
@@ -40,6 +41,8 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+
+import static com.intellij.psi.JavaTokenType.TRANSITIVE_KEYWORD;
 
 // generates HighlightInfoType.ERROR-like HighlightInfos for modularity-related (Jigsaw) problems
 final class ModuleHighlightUtil {
@@ -268,8 +271,7 @@ final class ModuleHighlightUtil {
     return null;
   }
 
-  @NotNull
-  private static HighlightInfo.Builder getUnresolvedJavaModuleReason(@NotNull PsiElement parent, @NotNull PsiJavaModuleReferenceElement refElement) {
+  private static @NotNull HighlightInfo.Builder getUnresolvedJavaModuleReason(@NotNull PsiElement parent, @NotNull PsiJavaModuleReferenceElement refElement) {
     PsiJavaModuleReference ref = refElement.getReference();
     assert ref != null : refElement.getParent();
 
@@ -300,14 +302,13 @@ final class ModuleHighlightUtil {
   }
 
   static HighlightInfo.Builder checkHostModuleStrength(@NotNull PsiPackageAccessibilityStatement statement) {
-    PsiElement parent;
     if (statement.getRole() == Role.OPENS &&
-        (parent = statement.getParent()) instanceof PsiJavaModule &&
-        ((PsiJavaModule)parent).hasModifierProperty(PsiModifier.OPEN)) {
+        statement.getParent() instanceof PsiJavaModule module &&
+        module.hasModifierProperty(PsiModifier.OPEN)) {
       String message = JavaErrorBundle.message("module.opens.in.weak.module");
       HighlightInfo.Builder info = HighlightInfo.newHighlightInfo(HighlightInfoType.ERROR).range(statement).descriptionAndTooltip(message);
       IntentionAction action1 = QuickFixFactory.getInstance()
-        .createModifierListFix((PsiModifierListOwner)parent, PsiModifier.OPEN, false, false);
+        .createModifierListFix(module, PsiModifier.OPEN, false, false);
       info.registerFix(action1, null, null, null, null);
       IntentionAction action = QuickFixFactory.getInstance().createDeleteFix(statement);
       info.registerFix(action, null, null, null, null);
@@ -324,9 +325,9 @@ final class ModuleHighlightUtil {
       if (module != null) {
         PsiElement target = refElement.resolve();
         PsiDirectory[] directories = PsiDirectory.EMPTY_ARRAY;
-        if (target instanceof PsiPackage) {
+        if (target instanceof PsiPackage psiPackage) {
           boolean inTests = ModuleRootManager.getInstance(module).getFileIndex().isInTestSourceContent(file.getVirtualFile());
-          directories = ((PsiPackage)target).getDirectories(module.getModuleScope(inTests));
+          directories = psiPackage.getDirectories(module.getModuleScope(inTests));
         }
         String packageName = statement.getPackageName();
         boolean opens = statement.getRole() == Role.OPENS;
@@ -389,12 +390,12 @@ final class ModuleHighlightUtil {
   static HighlightInfo.Builder checkServiceReference(@Nullable PsiJavaCodeReferenceElement refElement) {
     if (refElement != null) {
       PsiElement target = refElement.resolve();
-      if (!(target instanceof PsiClass)) {
+      if (!(target instanceof PsiClass psiClass)) {
         String message = JavaErrorBundle.message("cannot.resolve.symbol", refElement.getReferenceName());
         return HighlightInfo.newHighlightInfo(HighlightInfoType.ERROR).range(range(refElement)).descriptionAndTooltip(message);
       }
-      else if (((PsiClass)target).isEnum()) {
-        String message = JavaErrorBundle.message("module.service.enum", ((PsiClass)target).getName());
+      else if (psiClass.isEnum()) {
+        String message = JavaErrorBundle.message("module.service.enum", psiClass.getName());
         return HighlightInfo.newHighlightInfo(HighlightInfoType.ERROR).range(range(refElement)).descriptionAndTooltip(message);
       }
     }
@@ -420,7 +421,7 @@ final class ModuleHighlightUtil {
         continue;
       }
 
-      if (!(intTarget instanceof PsiClass)) continue;
+      if (!(intTarget instanceof PsiClass psiClass)) continue;
 
       PsiElement implTarget = implRef.resolve();
       if (implTarget instanceof PsiClass implClass) {
@@ -434,15 +435,15 @@ final class ModuleHighlightUtil {
         PsiMethod provider = JavaServiceUtil.findServiceProviderMethod(implClass);
         if (provider != null) {
           PsiType type = provider.getReturnType();
-          PsiClass typeClass = type instanceof PsiClassType ? ((PsiClassType)type).resolve() : null;
-          if (!InheritanceUtil.isInheritorOrSelf(typeClass, (PsiClass)intTarget, true)) {
+          PsiClass typeClass = type instanceof PsiClassType classType ? classType.resolve() : null;
+          if (!InheritanceUtil.isInheritorOrSelf(typeClass, psiClass, true)) {
             String message = JavaErrorBundle.message("module.service.provider.type", implClass.getName());
             HighlightInfo.Builder info =
               HighlightInfo.newHighlightInfo(HighlightInfoType.ERROR).range(range(implRef)).descriptionAndTooltip(message);
             errorSink.accept(info);
           }
         }
-        else if (InheritanceUtil.isInheritorOrSelf(implClass, (PsiClass)intTarget, true)) {
+        else if (InheritanceUtil.isInheritorOrSelf(implClass, psiClass, true)) {
           if (implClass.hasModifierProperty(PsiModifier.ABSTRACT)) {
             String message = JavaErrorBundle.message("module.service.abstract", implClass.getName());
             HighlightInfo.Builder info =
@@ -466,7 +467,7 @@ final class ModuleHighlightUtil {
           String message = JavaErrorBundle.message("module.service.impl");
           HighlightInfo.Builder info =
             HighlightInfo.newHighlightInfo(HighlightInfoType.ERROR).range(range(implRef)).descriptionAndTooltip(message);
-          PsiClassType type = JavaPsiFacade.getElementFactory(file.getProject()).createType((PsiClass)intTarget);
+          PsiClassType type = JavaPsiFacade.getElementFactory(file.getProject()).createType(psiClass);
           IntentionAction action = QuickFixFactory.getInstance().createExtendsListFix(implClass, type, true);
           info.registerFix(action, null, null, null, null);
           errorSink.accept(info);
@@ -489,7 +490,11 @@ final class ModuleHighlightUtil {
   static void checkModifiers(@NotNull PsiRequiresStatement statement, @NotNull Consumer<? super HighlightInfo.Builder> errorSink) {
     PsiModifierList modList = statement.getModifierList();
     if (modList != null && PsiJavaModule.JAVA_BASE.equals(statement.getModuleName())) {
+      boolean transitiveAvailable = PsiUtil.isAvailable(JavaFeature.TRANSITIVE_DEPENDENCY_ON_JAVA_BASE, statement);
       PsiTreeUtil.processElements(modList, PsiKeyword.class, keyword -> {
+        if (keyword.getTokenType() == TRANSITIVE_KEYWORD && transitiveAvailable) {
+          return true;
+        }
         @PsiModifier.ModifierConstant String modifier = keyword.getText();
         String message = JavaErrorBundle.message("modifier.not.allowed", modifier);
         HighlightInfo.Builder info = HighlightInfo.newHighlightInfo(HighlightInfoType.ERROR).range(keyword).descriptionAndTooltip(message);
@@ -510,8 +515,7 @@ final class ModuleHighlightUtil {
     return ObjectUtils.notNull(refElement.getReferenceNameElement(), refElement);
   }
 
-  @NotNull
-  private static HighlightInfo.Builder createDuplicateReference(@NotNull PsiElement refElement, @NotNull @NlsContexts.DetailedDescription String message) {
+  private static @NotNull HighlightInfo.Builder createDuplicateReference(@NotNull PsiElement refElement, @NotNull @NlsContexts.DetailedDescription String message) {
     HighlightInfo.Builder info = HighlightInfo.newHighlightInfo(HighlightInfoType.ERROR).range(refElement).descriptionAndTooltip(message);
     IntentionAction action = QuickFixFactory.getInstance().createDeleteFix(refElement, QuickFixBundle.message("delete.reference.fix.text"));
     info.registerFix(action, null, null, null, null);

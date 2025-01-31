@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.jetbrains.python.sdk.add.v2
 
 import com.intellij.openapi.observable.util.and
@@ -13,11 +13,11 @@ import com.jetbrains.python.PyBundle.message
 import com.jetbrains.python.newProject.collector.InterpreterStatisticsInfo
 import com.jetbrains.python.sdk.ModuleOrProject
 import com.jetbrains.python.sdk.add.v2.PythonSupportedEnvironmentManagers.*
-import com.jetbrains.python.util.ErrorSink
+import com.jetbrains.python.errorProcessing.ErrorSink
 import kotlinx.coroutines.flow.Flow
 import java.nio.file.Path
 
-class PythonAddCustomInterpreter(val model: PythonMutableTargetAddInterpreterModel, val moduleOrProject: ModuleOrProject? = null, projectPathFlow: Flow<Path>? = null, errorSink: ErrorSink) {
+class PythonAddCustomInterpreter(val model: PythonMutableTargetAddInterpreterModel, val moduleOrProject: ModuleOrProject? = null, projectPathFlow: Flow<Path>? = null, private val errorSink: ErrorSink) {
 
   private val propertyGraph = model.propertyGraph
   private val selectionMethod = propertyGraph.property(PythonInterpreterSelectionMethod.CREATE_NEW)
@@ -27,16 +27,19 @@ class PythonAddCustomInterpreter(val model: PythonMutableTargetAddInterpreterMod
   private val existingInterpreterManager = propertyGraph.property(PYTHON)
 
   private val newInterpreterCreators = mapOf(
-    VIRTUALENV to PythonNewVirtualenvCreator(model),
-    CONDA to CondaNewEnvironmentCreator(model,  errorSink),
-    PIPENV to PipEnvNewEnvironmentCreator(model),
-    POETRY to PoetryNewEnvironmentCreator(model, moduleOrProject),
+    VIRTUALENV to EnvironmentCreatorVenv(model),
+    CONDA to CondaNewEnvironmentCreator(model),
+    PIPENV to EnvironmentCreatorPip(model),
+    POETRY to EnvironmentCreatorPoetry(model, moduleOrProject),
+    UV to EnvironmentCreatorUv(model),
   )
 
-  private val existingInterpreterSelectors = mapOf(
-    PYTHON to PythonExistingEnvironmentSelector(model),
-    CONDA to CondaExistingEnvironmentSelector(model, errorSink),
-  )
+  private val existingInterpreterSelectors = buildMap {
+    put(PYTHON, PythonExistingEnvironmentSelector(model))
+    put(CONDA, CondaExistingEnvironmentSelector(model, errorSink))
+    if (moduleOrProject != null) put(POETRY, PoetryExistingEnvironmentSelector(model, moduleOrProject))
+    if (moduleOrProject != null) put(UV, UvExistingEnvironmentSelector(model, moduleOrProject))
+  }
 
   val currentSdkManager: PythonAddEnvironment
     get() {
@@ -51,15 +54,6 @@ class PythonAddCustomInterpreter(val model: PythonMutableTargetAddInterpreterMod
       navigator.newEnvManager = newInterpreterManager
       navigator.existingEnvManager = existingInterpreterManager
     }
-
-    // todo delete this. testing busy state
-    //existingInterpreterManager.afterChange {
-    //  model.scope.launch {
-    //    model.interpreterLoading.value = true
-    //    delay(5000)
-    //    model.interpreterLoading.value = false
-    //  }
-    //}
 
     with(outerPanel) {
       buttonsGroup {
@@ -92,19 +86,25 @@ class PythonAddCustomInterpreter(val model: PythonMutableTargetAddInterpreterMod
 
       newInterpreterCreators.forEach { (type, creator) ->
         rowsRange {
-          creator.buildOptions(this,
-                               validationRequestor
-                                 and WHEN_PROPERTY_CHANGED(selectionMethod)
-                                 and WHEN_PROPERTY_CHANGED(newInterpreterManager))
+          creator.buildOptions(
+            this,
+            validationRequestor
+              and WHEN_PROPERTY_CHANGED(selectionMethod)
+              and WHEN_PROPERTY_CHANGED(newInterpreterManager),
+            errorSink = errorSink
+          )
         }.visibleIf(_createNew and newInterpreterManager.equalsTo(type))
       }
 
       existingInterpreterSelectors.forEach { (type, selector) ->
         rowsRange {
-          selector.buildOptions(this,
-                                validationRequestor
-                                  and WHEN_PROPERTY_CHANGED(selectionMethod)
-                                  and WHEN_PROPERTY_CHANGED(existingInterpreterManager))
+          selector.buildOptions(
+            this,
+            validationRequestor
+              and WHEN_PROPERTY_CHANGED(selectionMethod)
+              and WHEN_PROPERTY_CHANGED(existingInterpreterManager),
+            errorSink
+          )
         }.visibleIf(_selectExisting and existingInterpreterManager.equalsTo(type))
       }
 

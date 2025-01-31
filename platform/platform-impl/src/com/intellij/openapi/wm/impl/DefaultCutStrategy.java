@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.wm.impl;
 
 import com.intellij.util.ui.UIUtil;
@@ -12,11 +12,10 @@ import static com.intellij.ui.paint.PaintUtil.getStringWidth;
 @ApiStatus.Internal
 public final class DefaultCutStrategy implements TextCutStrategy {
 
-  private static final int MIN_TEXT_LENGTH = 5;
+  private static final int MIN_TEXT_LENGTH = 4;
 
-  @NotNull
   @Override
-  public String calcShownText(@NotNull String text, @NotNull FontMetrics metrics, int maxWidth, @NotNull Graphics g) {
+  public @NotNull String calcShownText(@NotNull String text, @NotNull FontMetrics metrics, int maxWidth, @NotNull Graphics g) {
     int width = getStringWidth(text, g, metrics);
     if (width <= maxWidth) return text;
 
@@ -29,6 +28,6 @@ public final class DefaultCutStrategy implements TextCutStrategy {
 
   @Override
   public int calcMinTextWidth(@NotNull String text, @NotNull FontMetrics metrics) {
-    return UIUtil.computeTextComponentMinimumSize(metrics.stringWidth(text), text, metrics, MIN_TEXT_LENGTH - 1);
+    return UIUtil.computeTextComponentMinimumSize(metrics.stringWidth(text), text, metrics, MIN_TEXT_LENGTH);
   }
 }

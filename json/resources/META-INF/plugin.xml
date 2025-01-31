@@ -16,6 +16,7 @@
     <plugin id="com.intellij.modules.lang"/>
   </dependencies>
 
+  <!--todo employ embedded/required content module feature when IJPL-164312 is fixed-->
   <xi:include href="/intellij.json.split.xml" xpointer="xpointer(/idea-plugin/*)"/>
 
   <actions resource-bundle="messages.JsonBundle">
@@ -36,6 +37,7 @@
   <extensions defaultExtensionNs="com.intellij">
     <virtualFileCustomDataProvider implementation="com.intellij.json.split.JsonCodeStyleSettingsCustomDataSynchronizer"/>
 
+    <registryKey key="json.schema.object.v2.enable.nested.remote.schema.resolve" defaultValue="false" description="Try loading remote schema parts on the fly"/>
     <registryKey key="json.schema.object.v2" defaultValue="true" description="Use lightweight implementation of JsonSchemaObject"/>
     <registryKey key="remote.schema.cache.validity.duration" defaultValue="1"
                  description="The time period (in minutes) a file is being kept in cache for. Applicable to references that contain remote URLs."/>
@@ -129,10 +131,11 @@
 
     <json.jsonStandardComplianceProvider implementation="com.intellij.json.jsonc.JsoncComplianceProvider"/>
 
-    <lang.floatingToolbarCustomizer language="JSON"
-                                    implementationClass="com.intellij.ui.codeFloatingToolbar.FloatingToolbarCustomizer$MinimalGroup"/>
+    <lang.floatingToolbar language="JSON" minimal="true"/>
 
     <pluginSuggestionProvider implementation="com.jetbrains.jsonSchema.wiremock.WireMockSuggestionProvider"/>
+    <statistics.counterUsagesCollector implementationClass="com.jetbrains.jsonSchema.fus.JsonFeatureUsageCollector"/>
+    <statistics.validation.customValidationRule implementation="com.jetbrains.jsonSchema.fus.JsonSchemaIdValidationRule"/>
   </extensions>
 
   <extensions defaultExtensionNs="JavaScript">

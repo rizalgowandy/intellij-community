@@ -38,10 +38,7 @@ import com.intellij.util.ui.tree.TreeUtil;
 import com.intellij.xdebugger.*;
 import com.intellij.xdebugger.evaluation.XDebuggerEditorsProvider;
 import com.intellij.xdebugger.frame.XStackFrame;
-import com.intellij.xdebugger.impl.XDebugSessionImpl;
-import com.intellij.xdebugger.impl.XDebuggerManagerImpl;
-import com.intellij.xdebugger.impl.XDebuggerUtilImpl;
-import com.intellij.xdebugger.impl.XDebuggerWatchesManager;
+import com.intellij.xdebugger.impl.*;
 import com.intellij.xdebugger.impl.actions.XDebuggerActions;
 import com.intellij.xdebugger.impl.breakpoints.XExpressionImpl;
 import com.intellij.xdebugger.impl.evaluate.DebuggerEvaluationStatisticsCollector;
@@ -67,8 +64,10 @@ import javax.swing.tree.TreePath;
 import java.awt.*;
 import java.awt.datatransfer.DataFlavor;
 import java.awt.event.*;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
-import java.util.*;
+import java.util.Set;
 
 @ApiStatus.Internal
 public class XWatchesViewImpl extends XVariablesView implements DnDNativeTarget, XWatchesView, XInlineWatchesView {
@@ -79,6 +78,7 @@ public class XWatchesViewImpl extends XVariablesView implements DnDNativeTarget,
   private XDebuggerExpressionComboBox myEvaluateComboBox;
 
   private final CompositeDisposable myDisposables = new CompositeDisposable();
+  private final @NotNull String myConfigurationName;
   private final boolean myWatchesInVariables;
   private final boolean inlineWatchesEnabled;
 
@@ -92,6 +92,7 @@ public class XWatchesViewImpl extends XVariablesView implements DnDNativeTarget,
 
   public XWatchesViewImpl(@NotNull XDebugSessionImpl session, boolean watchesInVariables, boolean vertical, boolean withToolbar) {
     super(session);
+    myConfigurationName = session.getSessionData().getConfigurationName();
     myWatchesInVariables = watchesInVariables;
     inlineWatchesEnabled = Registry.is("debugger.watches.inline.enabled");
 
@@ -158,7 +159,8 @@ public class XWatchesViewImpl extends XVariablesView implements DnDNativeTarget,
         .addToTop(top);
       localsPanelComponent.add(panel, BorderLayout.CENTER);
       return super.createMainPanel(localsPanelComponent);
-    } else {
+    }
+    else {
       return new BorderLayoutPanel()
         .addToCenter(localsPanelComponent)
         .addToTop(top);
@@ -203,6 +205,7 @@ public class XWatchesViewImpl extends XVariablesView implements DnDNativeTarget,
             toolbar.setReservePlaceAutoPopupIcon(false);
             toolbar.setTargetComponent(tree);
             XDebuggerEmbeddedComboBox<XExpression> comboBox = new XDebuggerEmbeddedComboBox<>(model, width);
+            comboBox.setName("Debugger.EvaluateExpression.combobox");
             comboBox.setExtension(toolbar);
             return comboBox;
           }
@@ -294,7 +297,7 @@ public class XWatchesViewImpl extends XVariablesView implements DnDNativeTarget,
     XExpression expression = myEvaluateComboBox.getExpression();
     if (!XDebuggerUtilImpl.isEmptyExpression(expression)) {
       myEvaluateComboBox.saveTextInHistory();
-      XDebugSession session = getSession(getTree());
+      XDebugSession session = getSession();
       if (session != null) {
         ApplicationManager.getApplication().getMessageBus().syncPublisher(XEvaluationListener.TOPIC)
           .inlineEvaluatorInvoked(session, expression);
@@ -323,7 +326,7 @@ public class XWatchesViewImpl extends XVariablesView implements DnDNativeTarget,
       @Override
       public boolean onClick(@NotNull MouseEvent event, int clickCount) {
         if (!SwingUtilities.isLeftMouseButton(event) ||
-            ((event.getModifiers() & (InputEvent.SHIFT_MASK | InputEvent.ALT_MASK | InputEvent.CTRL_MASK | InputEvent.META_MASK)) !=0) ) {
+            ((event.getModifiers() & (InputEvent.SHIFT_MASK | InputEvent.ALT_MASK | InputEvent.CTRL_MASK | InputEvent.META_MASK)) != 0)) {
           return false;
         }
         boolean sameRow = isAboveSelectedItem(event, watchTree, false);
@@ -417,7 +420,7 @@ public class XWatchesViewImpl extends XVariablesView implements DnDNativeTarget,
 
   public void addWatchExpression(@NotNull XExpression expression, int index, final boolean navigateToWatchNode, boolean noDuplicates) {
     ThreadingAssertions.assertEventDispatchThread();
-    XDebugSession session = getSession(getTree());
+    XDebugSessionImpl session = getSession();
     boolean found = false;
     if (noDuplicates) {
       for (WatchNode child : myRootNode.getWatchChildren()) {
@@ -432,7 +435,7 @@ public class XWatchesViewImpl extends XVariablesView implements DnDNativeTarget,
       updateSessionData();
     }
     if (navigateToWatchNode && session != null) {
-      XDebugSessionTab.showWatchesView((XDebugSessionImpl)session);
+      XDebugSessionTab.showWatchesView(session);
     }
   }
 
@@ -443,16 +446,12 @@ public class XWatchesViewImpl extends XVariablesView implements DnDNativeTarget,
   @Override
   protected XValueContainerNode doCreateNewRootNode(@Nullable XStackFrame stackFrame) {
     if (inlineWatchesEnabled) {
-      myRootNode = new InlineWatchesRootNode(getTree(), this, getExpressions(), getInlineExpressions(), stackFrame, myWatchesInVariables);
-    } else {
-      myRootNode = new WatchesRootNode(getTree(), this, getExpressions(), stackFrame, myWatchesInVariables);
+      myRootNode = new InlineWatchesRootNode(getTree(), this, myConfigurationName, stackFrame, myWatchesInVariables);
+    }
+    else {
+      myRootNode = new WatchesRootNode(getTree(), this, myConfigurationName, stackFrame, myWatchesInVariables);
     }
     return myRootNode;
-  }
-
-  @NotNull
-  private List<InlineWatch> getInlineExpressions() {
-    return getWatchesManager().getInlineWatches();
   }
 
   private XDebuggerWatchesManager getWatchesManager() {
@@ -463,12 +462,13 @@ public class XWatchesViewImpl extends XVariablesView implements DnDNativeTarget,
   @Override
   public void addInlineWatchExpression(@NotNull InlineWatch watch, int index, boolean navigateToWatchNode) {
     ThreadingAssertions.assertEventDispatchThread();
-    XDebugSession session = getSession(getTree());
+    XDebugSessionImpl session = getSession();
 
-    ((InlineWatchesRootNode)myRootNode).addInlineWatchExpression(session != null ? session.getCurrentStackFrame() : null, watch, index, navigateToWatchNode);
+    ((InlineWatchesRootNode)myRootNode).addInlineWatchExpression(session != null ? session.getCurrentStackFrame() : null, watch, index,
+                                                                 navigateToWatchNode);
 
     if (navigateToWatchNode && session != null) {
-      XDebugSessionTab.showWatchesView((XDebugSessionImpl)session);
+      XDebugSessionTab.showWatchesView(session);
     }
   }
 
@@ -517,19 +517,12 @@ public class XWatchesViewImpl extends XVariablesView implements DnDNativeTarget,
     }
   }
 
-  @NotNull
-  protected List<XExpression> getExpressions() {
-    XDebuggerTree tree = getTree();
-    XDebugSession session = getSession(tree);
-    List<XExpression> expressions;
-    if (session != null) {
-      expressions = ((XDebugSessionImpl)session).getSessionData().getWatchExpressions();
-    }
-    else {
-      XDebuggerTreeNode root = tree.getRoot();
-      expressions = root instanceof WatchesRootNode ? ((WatchesRootNode)root).getWatchExpressions() : Collections.emptyList();
-    }
-    return expressions;
+  /**
+   * @deprecated Use {@link XDebuggerWatchesManager#getWatches(String)} directly
+   */
+  @Deprecated
+  protected @NotNull List<XExpression> getExpressions() {
+    return getWatchesManager().getWatches(myConfigurationName);
   }
 
   @Override
@@ -594,14 +587,8 @@ public class XWatchesViewImpl extends XVariablesView implements DnDNativeTarget,
   }
 
   public void updateSessionData() {
-    List<XExpression> watchExpressions = myRootNode.getWatchExpressions();
-    XDebugSession session = getSession(getTree());
-    XDebugSessionData data = (session != null) ? ((XDebugSessionImpl)session).getSessionData()
-                                               : getData(XDebugSessionData.DATA_KEY, getTree());
-    if (data != null) {
-      data.setWatchExpressions(watchExpressions);
-      getWatchesManager().setWatches(data.getConfigurationName(), watchExpressions);
-    }
+    List<XWatch> watches = myRootNode.getWatches();
+    getWatchesManager().setWatchEntries(myConfigurationName, watches);
   }
 
   @Override

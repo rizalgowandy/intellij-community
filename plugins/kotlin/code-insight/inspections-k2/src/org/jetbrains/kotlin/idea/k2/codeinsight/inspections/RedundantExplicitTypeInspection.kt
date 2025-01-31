@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.kotlin.idea.k2.codeinsight.inspections
 
 import com.intellij.codeInspection.ProblemsHolder
@@ -16,9 +16,9 @@ import org.jetbrains.kotlin.idea.codeinsight.api.applicable.asUnit
 import org.jetbrains.kotlin.idea.codeinsight.api.applicable.inspections.KotlinApplicableInspectionBase
 import org.jetbrains.kotlin.idea.codeinsight.api.applicable.inspections.KotlinModCommandQuickFix
 import org.jetbrains.kotlin.idea.codeinsight.api.applicators.ApplicabilityRange
-import org.jetbrains.kotlin.idea.codeinsight.utils.getClassId
 import org.jetbrains.kotlin.idea.codeinsight.utils.removeDeclarationTypeReference
 import org.jetbrains.kotlin.psi.*
+import org.jetbrains.kotlin.psi.psiUtil.inferClassIdByPsi
 
 internal class RedundantExplicitTypeInspection : KotlinApplicableInspectionBase.Simple<KtProperty, Unit>() {
 
@@ -39,7 +39,7 @@ internal class RedundantExplicitTypeInspection : KotlinApplicableInspectionBase.
 
         when (initializer) {
             is KtConstantExpression -> {
-                val fqName = initializer.getClassId()?.asSingleFqName() ?: return false
+                val fqName = initializer.inferClassIdByPsi()?.asSingleFqName() ?: return false
                 val classType = type as? KaClassType ?: return false
                 val typeFqName = classType.symbol.classId?.asSingleFqName() ?: return false
                 if (typeFqName != fqName || type.isMarkedNullable) return false
@@ -86,10 +86,10 @@ internal class RedundantExplicitTypeInspection : KotlinApplicableInspectionBase.
     override fun getProblemDescription(element: KtProperty, context: Unit): String =
         KotlinBundle.message("explicitly.given.type.is.redundant.here")
 
-    override fun createQuickFix(
+    override fun createQuickFixes(
         element: KtProperty,
         context: Unit
-    ): KotlinModCommandQuickFix<KtProperty> = RemoveRedundantTypeFix()
+    ): Array<KotlinModCommandQuickFix<KtProperty>> = arrayOf(RemoveRedundantTypeFix())
 
     override fun isApplicableByPsi(element: KtProperty): Boolean {
         return element.typeReference != null

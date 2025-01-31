@@ -2,16 +2,11 @@
 
 package org.jetbrains.kotlin.j2k
 
-import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.EDT
-import com.intellij.openapi.application.readAction
-import com.intellij.openapi.application.runWriteAction
-import com.intellij.openapi.application.writeAction
+import com.intellij.openapi.application.*
 import com.intellij.openapi.diagnostic.ControlFlowException
 import com.intellij.openapi.editor.RangeMarker
 import com.intellij.openapi.editor.asTextRange
 import com.intellij.openapi.util.Disposer
-import com.intellij.openapi.util.TextRange
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiRecursiveElementVisitor
 import com.intellij.psi.codeStyle.CodeStyleManager
@@ -169,7 +164,7 @@ class OldJ2kPostProcessor(private val formatCode: Boolean = true) : PostProcesso
     private fun rangeFilter(element: PsiElement, rangeMarker: RangeMarker?): RangeFilterResult {
         if (rangeMarker == null) return RangeFilterResult.PROCESS
         if (!rangeMarker.isValid) return RangeFilterResult.SKIP
-        val range = TextRange(rangeMarker.startOffset, rangeMarker.endOffset)
+        val range = rangeMarker.textRange
         val elementRange = element.textRange
         return when {
             range.contains(elementRange) -> RangeFilterResult.PROCESS

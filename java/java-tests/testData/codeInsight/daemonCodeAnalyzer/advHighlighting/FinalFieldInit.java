@@ -301,7 +301,7 @@ class DefiniteAssignmentInFinally {
 }
 class StaticInitializerUsedInAnotherInstanceField {
   private final int myEnumerationCacheConstant = ENUMERATION_CACHE_SIZE;
-  private static final int ourEnumerationCacheConstant = <error descr="Variable 'ENUMERATION_CACHE_SIZE' might not have been initialized">ENUMERATION_CACHE_SIZE</error>;
+  private static final int ourEnumerationCacheConstant = <error descr="Cannot read value of field 'ENUMERATION_CACHE_SIZE' before the field's definition">ENUMERATION_CACHE_SIZE</error>;
 
   private static final int ENUMERATION_CACHE_SIZE;
 
@@ -382,4 +382,14 @@ class InsideAnAnonymousClass {
       _s = s;
     }
   }
+}
+class ItMight {
+  final int a;
+  final int b = a = <error descr="Variable 'a' might not have been initialized">a</error>;
+}
+class Key {
+
+  private static final int COUNT;
+
+  private static final int count = <error descr="Variable 'COUNT' might not have been initialized">COUNT</error>++;
 }

@@ -20,9 +20,9 @@ import com.intellij.platform.workspace.jps.entities.ModuleEntity;
 import com.intellij.platform.workspace.storage.EntityStorage;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.indexing.AdditionalIndexableFileSet;
-import com.intellij.util.indexing.EntityIndexingServiceEx;
 import com.intellij.util.indexing.IndexableFilesIndex;
 import com.intellij.util.indexing.IndexableSetContributor;
+import com.intellij.util.indexing.ProjectEntityIndexingService;
 import com.intellij.util.indexing.dependenciesCache.DependenciesIndexedStatusService;
 import com.intellij.util.indexing.roots.kind.IndexableSetOrigin;
 import com.intellij.workspaceModel.core.fileIndex.EntityStorageKind;
@@ -34,6 +34,7 @@ import kotlin.sequences.Sequence;
 import kotlin.sequences.SequencesKt;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Unmodifiable;
 
 import java.util.*;
 
@@ -62,11 +63,11 @@ public final class IndexableFilesIndexImpl implements IndexableFilesIndex {
   }
 
   @Override
-  public @NotNull Collection<? extends IndexableSetOrigin> getOrigins(@NotNull Collection<VirtualFile> files) {
+  public @Unmodifiable @NotNull Collection<? extends IndexableSetOrigin> getOrigins(@NotNull Collection<VirtualFile> files) {
     if (files.isEmpty()) return Collections.emptyList();
     OriginClassifier classifier = OriginClassifier.classify(project, files);
     Collection<IndexableFilesIterator> iterators =
-      EntityIndexingServiceEx.getInstanceEx().createIteratorsForOrigins(project, classifier.entityStorage, classifier.myEntityPointers,
+      ProjectEntityIndexingService.Companion.getInstance(project).createIteratorsForOrigins(classifier.entityStorage, classifier.myEntityPointers,
                                                                         classifier.sdks, classifier.libraryIds,
                                                                         classifier.filesFromAdditionalLibraryRootsProviders,
                                                                         classifier.filesFromIndexableSetContributors);

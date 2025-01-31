@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.codeInsight.daemon.impl;
 
 import com.intellij.codeHighlighting.HighlightDisplayLevel;
@@ -27,10 +27,7 @@ import com.intellij.openapi.editor.markup.TextAttributes;
 import com.intellij.openapi.editor.markup.UnmodifiableTextAttributes;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
-import com.intellij.openapi.project.DumbService;
-import com.intellij.openapi.project.PossiblyDumbAware;
-import com.intellij.openapi.project.Project;
-import com.intellij.openapi.project.ProjectTypeService;
+import com.intellij.openapi.project.*;
 import com.intellij.openapi.util.*;
 import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.util.text.StringUtil;
@@ -109,8 +106,8 @@ final class LocalInspectionsPass extends ProgressableTextEditorHighlightingPass 
           List<HighlightInfo> allInfos = descriptors.isEmpty() ? null : new ArrayList<>(descriptors.size());
           for (ProblemDescriptor descriptor : descriptors) {
             PsiElement descriptorPsiElement = descriptor.getPsiElement();
-            HighlightDisplayKey key = HighlightDisplayKey.find(holder.myToolWrapper.getShortName());
             if (LOG.isTraceEnabled()) {
+              HighlightDisplayKey key = HighlightDisplayKey.find(holder.myToolWrapper.getShortName());
               LOG.trace("collectInformationWithProgress:applyIncrementallyCallback: toolId:" + holder.myToolWrapper.getShortName() + ": " +
                         descriptor + "; psi:" + descriptorPsiElement + "; isEnabled:" +
                         myProfileWrapper.getInspectionProfile().isToolEnabled(key, getFile()));
@@ -220,7 +217,9 @@ final class LocalInspectionsPass extends ProgressableTextEditorHighlightingPass 
     HighlightInfo.Builder b = HighlightInfo.newHighlightInfo(highlightInfoType)
       .range(psiElement, textRange.getStartOffset(), textRange.getEndOffset())
       .description(message)
-      .severity(severity);
+      .severity(severity)
+      .group(HighlightInfoUpdaterImpl.MANAGED_HIGHLIGHT_INFO_GROUP)
+      ;
     if (toolTip != null) b.escapedToolTip(toolTip);
     if (HighlightSeverity.INFORMATION.equals(severity) && attributes == null && toolTip == null && !quickFixes.isEmpty()) {
       // Hack to avoid filtering this info out in HighlightInfoFilterImpl even though its attributes are empty.
@@ -245,16 +244,13 @@ final class LocalInspectionsPass extends ProgressableTextEditorHighlightingPass 
                                              @NotNull LocalInspectionToolWrapper tool,
                                              @NotNull Consumer<? super HighlightInfo> infoProcessor) {
     ApplicationManager.getApplication().assertIsNonDispatchThread();
-    if (myIgnoreSuppressed) {
-      LocalInspectionToolWrapper toolWrapper = tool;
-      if (descriptor instanceof ProblemDescriptorWithReporterName name) {
-        String reportingToolName = name.getReportingToolName();
-        toolWrapper = (LocalInspectionToolWrapper)myProfileWrapper.getInspectionTool(reportingToolName, psiElement);
-      }
-      if (toolWrapper.getTool().isSuppressedFor(psiElement)) {
-        registerSuppressedElements(psiElement, toolWrapper.getID(), toolWrapper.getAlternativeID(), mySuppressedElements);
-        return;
-      }
+    if (descriptor instanceof ProblemDescriptorWithReporterName name) {
+      String reportingToolName = name.getReportingToolShortName();
+      tool = (LocalInspectionToolWrapper)myProfileWrapper.getInspectionTool(reportingToolName, psiElement);
+    }
+    if (myIgnoreSuppressed && tool.getTool().isSuppressedFor(psiElement)) {
+      registerSuppressedElements(psiElement, tool.getID(), tool.getAlternativeID(), mySuppressedElements);
+      return;
     }
 
     PsiFile file = psiElement.getContainingFile();
@@ -330,7 +326,8 @@ final class LocalInspectionsPass extends ProgressableTextEditorHighlightingPass 
     if (info == null || !UpdateHighlightersUtil.HighlightInfoPostFilters.accept(myProject, info)) {
       return;
     }
-    info.toolId = toolWrapper.getShortName();
+    info.setToolId(toolWrapper.getShortName());
+    info.setGroup(HighlightInfoUpdaterImpl.MANAGED_HIGHLIGHT_INFO_GROUP);
     if (isInInjected) {
       Document documentRange = documentManager.getDocument(file);
       if (documentRange != null) {
@@ -379,7 +376,8 @@ final class LocalInspectionsPass extends ProgressableTextEditorHighlightingPass 
         registerQuickFixes(builder, fixes, shortName);
         HighlightInfo patched = builder.createUnconditionally();
         patched.markFromInjection();
-        patched.toolId = info.toolId;
+        patched.setToolId(info.getToolId());
+        patched.setGroup(HighlightInfoUpdaterImpl.MANAGED_HIGHLIGHT_INFO_GROUP);
         outInfos.accept(patched);
       }
     }
@@ -476,13 +474,17 @@ final class LocalInspectionsPass extends ProgressableTextEditorHighlightingPass 
         continue; // filter out at least unknown languages
       }
 
-      if (myIgnoreSuppressed
-          && wrapper.isApplicable(getFile().getLanguage())
-          && wrapper.getTool().isSuppressedFor(getFile())) {
-        // inspections that do not match file language are excluded later in InspectionRunner.inspect
+      try {
+        if (myIgnoreSuppressed
+            && wrapper.isApplicable(getFile().getLanguage())
+            && wrapper.getTool().isSuppressedFor(getFile())) {
+          // inspections that do not match file language are excluded later in InspectionRunner.inspect
+          continue;
+        }
+      }
+      catch (IndexNotReadyException ex) {
         continue;
       }
-
       enabled.add(wrapper);
     }
     return enabled;
@@ -538,8 +540,7 @@ final class LocalInspectionsPass extends ProgressableTextEditorHighlightingPass 
       return false;
     }
 
-    @NotNull
-    private Set<? extends String> getInactiveToolWrapperIds() {
+    private @NotNull Set<? extends String> getInactiveToolWrapperIds() {
       return myInactiveIds;
     }
   }

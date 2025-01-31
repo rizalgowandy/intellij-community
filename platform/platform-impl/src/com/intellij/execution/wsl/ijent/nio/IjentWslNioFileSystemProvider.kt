@@ -1,14 +1,15 @@
 // Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.execution.wsl.ijent.nio
 
-import com.intellij.execution.eel.EelPathUtils.walkingTransfer
 import com.intellij.execution.wsl.WSLDistribution
+import com.intellij.execution.wsl.WslDistributionManager
 import com.intellij.execution.wsl.WslPath
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.util.io.CaseSensitivityAttribute
 import com.intellij.openapi.util.io.FileAttributes
 import com.intellij.platform.core.nio.fs.RoutingAwareFileSystemProvider
 import com.intellij.platform.eel.EelUserPosixInfo
+import com.intellij.platform.eel.provider.utils.EelPathUtils
 import com.intellij.platform.ijent.community.impl.nio.EelPosixGroupPrincipal
 import com.intellij.platform.ijent.community.impl.nio.EelPosixUserPrincipal
 import com.intellij.platform.ijent.community.impl.nio.IjentNioPath
@@ -27,6 +28,7 @@ import java.nio.file.attribute.PosixFilePermission.*
 import java.nio.file.spi.FileSystemProvider
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.io.path.ExperimentalPathApi
 import kotlin.io.path.name
 
@@ -45,7 +47,7 @@ import kotlin.io.path.name
  * an instance of [IjentWslNioFileSystem] can be obtained with a URL like "ijent://wsl/distribution-name".
  */
 class IjentWslNioFileSystemProvider(
-  wslDistribution: WSLDistribution,
+  private val wslDistribution: WSLDistribution,
   private val ijentFsProvider: FileSystemProvider,
   internal val originalFsProvider: FileSystemProvider,
 ) : FileSystemProvider(), RoutingAwareFileSystemProvider {
@@ -67,7 +69,7 @@ class IjentWslNioFileSystemProvider(
     when (this) {
       is IjentNioPath -> this
       is IjentWslNioPath -> delegate.toIjentPath()
-      else -> fold(ijentFsProvider.getPath(ijentFsUri) as IjentNioPath, IjentNioPath::resolve)
+      else -> fold(ijentFsProvider.getPath(ijentFsUri) as IjentNioPath, { nioPath, newPart -> nioPath.resolve(newPart.toString()) })
     }
 
   internal fun toOriginalPath(path: Path): Path = path.toOriginalPath()
@@ -108,8 +110,8 @@ class IjentWslNioFileSystemProvider(
   private fun wslIdFromPath(path: Path): String {
     val root = path.toAbsolutePath().root.toString()
     require(root.startsWith("""\\wsl""")) { "`$path` doesn't look like a file on WSL" }
-    val wslId = root.removePrefix("""\\wsl""").substringAfter('\\').trimEnd('\\')
-    return wslId
+    val wslIdWithProbablyWrongCase = root.removePrefix("""\\wsl""").substringAfter('\\').trimEnd('\\')
+    return allWslDistributionIds.get().single { wslId -> wslId.equals(wslIdWithProbablyWrongCase, true) }
   }
 
   override fun checkAccess(path: Path, vararg modes: AccessMode): Unit =
@@ -176,7 +178,7 @@ class IjentWslNioFileSystemProvider(
             // resolve() can't be used there because WindowsPath.resolve() checks that the other path is WindowsPath.
             val ijentPath = delegateIterator.next().toIjentPath()
 
-            val originalPath = ijentPath.asSequence().map(Path::name).map(::sanitizeFileName).fold(wslLocalRoot, Path::resolve)
+            val originalPath = dir.resolve(sanitizeFileName(ijentPath.fileName.toString()))
 
             val cachedAttrs = ijentPath.get() as IjentNioPosixFileAttributes?
             val dosAttributes =
@@ -184,11 +186,11 @@ class IjentWslNioFileSystemProvider(
                 IjentNioPosixFileAttributesWithDosAdapter(
                   ijentPath.fileSystem.ijentFs.user as EelUserPosixInfo,
                   cachedAttrs,
-                  nameStartsWithDot = ijentPath.eelPath.fileName.startsWith("."),
+                  nameStartsWithDot = ijentPath.fileName.startsWith("."),
                 )
               else null
 
-            return IjentWslNioPath(getFileSystem(wslId), originalPath, dosAttributes)
+            return IjentWslNioPath(getFileSystem(wslId), originalPath.toOriginalPath(), dosAttributes)
           }
 
           override fun remove() {
@@ -210,7 +212,7 @@ class IjentWslNioFileSystemProvider(
   }
 
   @OptIn(ExperimentalPathApi::class)
-  override fun copy(source: Path, target: Path, vararg options: CopyOption?) {
+  override fun copy(source: Path, target: Path, vararg options: CopyOption) {
     val sourceWsl = WslPath.parseWindowsUncPath(source.root.toString())
     val targetWsl = WslPath.parseWindowsUncPath(target.root.toString())
     when {
@@ -224,12 +226,12 @@ class IjentWslNioFileSystemProvider(
       }
 
       else -> {
-        walkingTransfer(source, target, removeSource = false)
+        EelPathUtils.walkingTransfer(source, target, removeSource = false, copyAttributes = StandardCopyOption.COPY_ATTRIBUTES in options)
       }
     }
   }
 
-  override fun move(source: Path, target: Path, vararg options: CopyOption?) {
+  override fun move(source: Path, target: Path, vararg options: CopyOption) {
     val sourceWsl = WslPath.parseWindowsUncPath(source.root.toString())
     val targetWsl = WslPath.parseWindowsUncPath(target.root.toString())
     when {
@@ -243,13 +245,42 @@ class IjentWslNioFileSystemProvider(
       }
 
       else -> {
-        walkingTransfer(source, target, removeSource = true)
+        EelPathUtils.walkingTransfer(source, target, removeSource = true, copyAttributes = StandardCopyOption.COPY_ATTRIBUTES in options)
       }
     }
   }
 
-  override fun isSameFile(path: Path, path2: Path): Boolean =
-    ijentFsProvider.isSameFile(path.toIjentPath(), path2.toIjentPath())
+  override fun isSameFile(path: Path, path2: Path): Boolean {
+    val conversionResult1 = tryConvertToWindowsPaths(path, path2)
+    if (conversionResult1 != null) {
+      return conversionResult1
+    }
+    val conversionResult2 = tryConvertToWindowsPaths(path2, path)
+    if (conversionResult2 != null) {
+      return conversionResult2
+    }
+    // so both paths are now located in WSL
+    if (path.root != path2.root) {
+      // the paths could be in different distributions
+      return false
+    }
+    return ijentFsProvider.isSameFile(path.toIjentPath(), path2.toIjentPath())
+  }
+
+  private fun tryConvertToWindowsPaths(path1: Path, path2: Path): Boolean? {
+    if (!WslPath.isWslUncPath(path1.root.toString())) {
+      // then the second path is in WSL, but it may be mounted Windows dir
+      val resolvedPath2 = path2.toRealPath().toString() // protection against symlinks
+      val parsed = WslPath.parseWindowsUncPath(resolvedPath2)
+      if (parsed != null) {
+        val windowsRepresentation = wslDistribution.getWindowsPath(parsed.linuxPath)
+        if (windowsRepresentation == resolvedPath2) return false
+        return Files.isSameFile(path1.toOriginalPath(), Path.of(windowsRepresentation))
+      }
+      return false
+    }
+    return null
+  }
 
   override fun isHidden(path: Path): Boolean =
     originalFsProvider.isHidden(path.toOriginalPath())
@@ -293,6 +324,21 @@ class IjentWslNioFileSystemProvider(
   }
 
   companion object {
+    private val allWslDistributionIds: AtomicReference<Set<String>> by lazy {
+      val ref = AtomicReference(emptySet<String>())
+      val wslDistributionManager = WslDistributionManager.getInstance()
+      wslDistributionManager.addWslDistributionsChangeListener { old, new ->
+        ref.updateAndGet { oldFromRef ->
+          val result = HashSet(oldFromRef)
+          result.removeAll(old.map { it.id })
+          result.addAll(new.map { it.id })
+          result
+        }
+      }
+      ref.set(wslDistributionManager.installedDistributions.map { it.id }.toHashSet())
+      ref
+    }
+
     private val LOG = logger<IjentWslNioFileSystemProvider>()
   }
 }
@@ -311,6 +357,10 @@ class IjentNioPosixFileAttributesWithDosAdapter(
     val owner = owner()
     val group = group()
     return when {
+      userInfo.uid == 0 && owner is EelPosixUserPrincipal && owner.uid != 0 ->
+        // on unix, root can read everything except the files that they forbid for themselves
+        isDirectory
+
       owner is EelPosixUserPrincipal && owner.uid == userInfo.uid ->
         OWNER_WRITE !in permissions() || (isDirectory && OWNER_EXECUTE !in permissions())
 

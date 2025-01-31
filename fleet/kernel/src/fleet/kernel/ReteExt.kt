@@ -2,9 +2,7 @@
 package fleet.kernel
 
 import com.jetbrains.rhizomedb.*
-import com.jetbrains.rhizomedb.impl.BaseEntity
 import fleet.kernel.rete.*
-import fleet.rpc.client.durable
 import fleet.util.AtomicRef
 import fleet.util.logging.logger
 import kotlinx.coroutines.*
@@ -25,18 +23,9 @@ import kotlin.reflect.KClass
 suspend fun <T> queryAsFlow(f: () -> T): Flow<T> =
   query { f() }.asValuesFlow()
 
-suspend inline fun <reified T : LegacyEntity> launchOnEachEntity(noinline f: suspend CoroutineScope.(T) -> Unit) {
-  launchOnEachEntity(T::class, f)
-}
 
 suspend fun <T : Entity> launchOnEachEntity(entityType: EntityType<T>, f: suspend CoroutineScope.(T) -> Unit) {
   entityType.each().launchOnEach { v ->
-    f(v)
-  }
-}
-
-suspend fun <T : LegacyEntity> launchOnEachEntity(kclass: KClass<T>, f: suspend CoroutineScope.(T) -> Unit) {
-  each(kclass).launchOnEach { v ->
     f(v)
   }
 }
@@ -52,9 +41,6 @@ private sealed class State11 {
  */
 fun Entity.onDispose(rete: Rete, action: () -> Unit = {}): DisposableHandle =
   let { entity ->
-    require((entity as? BaseEntity)?.initialized != false) {
-      "Entity is not initialized, call onDispose later"
-    }
     when {
       !exists() -> {
         action()
@@ -140,6 +126,8 @@ suspend fun <T> waitForNotNull(p: () -> T?): T {
 /**
  * guarantees that [entities] exist in the current db for all operations, including suspend [change]
  * see [withCondition]
+ *
+ * NOTE that in the [shared] blocks the existence has to be checked manually
  */
 suspend fun <T> withEntities(vararg entities: Entity, body: suspend CoroutineScope.() -> T): T =
   tryWithEntities(entities = entities, body).getOrThrow()
@@ -154,6 +142,8 @@ suspend fun <T> tryWithEntities(vararg entities: Entity, body: suspend Coroutine
 /**
  * guarantees that [condition] is true in the current db for all operations, including suspend [change]
  * if the condition is invalidated, [body] will be cancelled
+ *
+ * NOTE that in the [shared] blocks the condition has to be checked manually
  */
 suspend fun <T> tryWithCondition(condition: () -> Boolean, body: suspend CoroutineScope.() -> T): WithMatchResult<T> =
   predicateQuery(condition).withPredicate(body)

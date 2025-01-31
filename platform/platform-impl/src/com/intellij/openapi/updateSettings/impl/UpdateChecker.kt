@@ -194,6 +194,7 @@ object UpdateChecker {
       val result = runCatching {
         LOG.debug { "loading ${url}" }
         HttpRequests.request(url)
+          .productNameAsUserAgent()
           .connect { JDOMUtil.load(it.getReader(indicator)) }
           .let { parseUpdateData(it) }
           ?.also {
@@ -657,11 +658,11 @@ private fun doUpdateAndShowResult(
   // TODO revise this
   val pluginAutoUpdateService = service<PluginAutoUpdateService>()
   if (platformUpdates !is PlatformUpdates.Loaded) {
-    pluginAutoUpdateService.onPluginUpdatesCheck(updatesForPlugins)
+    pluginAutoUpdateService.onPluginUpdatesChecked(updatesForPlugins)
   } else {
     if (pluginAutoUpdateService.isAutoUpdateEnabled()) {
       val (pluginUpdates, _) = UpdateChecker.getInternalPluginUpdates(indicator = indicator)
-      pluginAutoUpdateService.onPluginUpdatesCheck(nonIgnored(pluginUpdates.allEnabled))
+      pluginAutoUpdateService.onPluginUpdatesChecked(nonIgnored(pluginUpdates.allEnabled))
     }
   }
 

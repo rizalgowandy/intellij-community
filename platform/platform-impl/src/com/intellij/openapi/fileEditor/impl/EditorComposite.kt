@@ -111,7 +111,8 @@ open class EditorComposite internal constructor(
    * Currently selected editor
    */
   @JvmField
-  internal val selectedEditorWithProvider: StateFlow<FileEditorWithProvider?> = _selectedEditorWithProvider.asStateFlow()
+  @Internal
+  val selectedEditorWithProvider: StateFlow<FileEditorWithProvider?> = _selectedEditorWithProvider.asStateFlow()
 
   private val topComponents = HashMap<FileEditor, JComponent>()
   private val bottomComponents = HashMap<FileEditor, JComponent>()
@@ -379,6 +380,7 @@ open class EditorComposite internal constructor(
         }
       }
     }
+    component.validate()
 
     fileEditorWithProviderToSelect?.fileEditor?.selectNotify()
 
@@ -942,25 +944,6 @@ fun retrofitEditorComposite(composite: FileEditorComposite?): com.intellij.opena
   else {
     return composite.retrofit()
   }
-}
-
-internal fun restoreEditorState(
-  file: VirtualFile,
-  fileEditorWithProvider: FileEditorWithProvider,
-  isNewEditor: Boolean,
-  exactState: Boolean,
-  project: Project,
-) {
-  val state = if (isNewEditor) {
-    // We have to try to get state from the history only in case of the editor is not opened.
-    // Otherwise, history entry might have a state out of sync with the current editor state.
-    EditorHistoryManager.getInstance(project).getState(file, fileEditorWithProvider.provider) ?: return
-  }
-  else {
-    return
-  }
-
-  restoreEditorState(fileEditorWithProvider = fileEditorWithProvider, state = state, exactState = exactState, project = project)
 }
 
 internal fun restoreEditorState(

@@ -2,6 +2,7 @@
 package org.jetbrains.kotlin.idea.k2.codeinsight.inspections.dfa
 
 import com.intellij.codeInsight.PsiEquivalenceUtil
+import com.intellij.codeInspection.LocalQuickFix
 import com.intellij.codeInspection.ProblemHighlightType
 import com.intellij.codeInspection.ProblemsHolder
 import com.intellij.codeInspection.dataFlow.interpreter.RunnerResult
@@ -44,6 +45,8 @@ import org.jetbrains.kotlin.idea.base.resources.KotlinBundle
 import org.jetbrains.kotlin.idea.base.util.module
 import org.jetbrains.kotlin.idea.codeinsight.api.classic.inspections.AbstractKotlinInspection
 import org.jetbrains.kotlin.idea.codeinsight.utils.negate
+import org.jetbrains.kotlin.idea.codeinsights.impl.base.quickFix.ConstantExpressionValue
+import org.jetbrains.kotlin.idea.codeinsights.impl.base.quickFix.SimplifyExpressionFix
 import org.jetbrains.kotlin.idea.inspections.dfa.KotlinAnchor
 import org.jetbrains.kotlin.idea.inspections.dfa.KotlinAnchor.*
 import org.jetbrains.kotlin.idea.inspections.dfa.KotlinProblem
@@ -177,7 +180,7 @@ class KotlinConstantConditionsInspection : AbstractKotlinInspection() {
                 when (anchor) {
                     is KotlinExpressionAnchor -> {
                         val expr = anchor.expression
-                        if (!analyze(expr) { shouldSuppress(cv, expr) }) {
+                        if (!analyze(expr) { shouldSuppress(cv, expr, false) }) {
                             val key = when (cv) {
                                 ConstantValue.TRUE ->
                                     if (shouldReportAsValue(cv, expr))
@@ -203,7 +206,21 @@ class KotlinConstantConditionsInspection : AbstractKotlinInspection() {
                                 if (shouldReportAsValue(cv, expr)) ProblemHighlightType.WEAK_WARNING
                                 else ProblemHighlightType.GENERIC_ERROR_OR_WARNING
                             if (warnOnConstantRefs || highlightType == ProblemHighlightType.GENERIC_ERROR_OR_WARNING) {
-                                holder.registerProblem(expr, KotlinBundle.message(key, expr.text), highlightType)
+                                val simplifyExpressionFixIfAvailable = when (cv) {
+                                    ConstantValue.TRUE -> ConstantExpressionValue.of(true)
+                                    ConstantValue.FALSE -> ConstantExpressionValue.of(false)
+                                    ConstantValue.ZERO -> ConstantExpressionValue.of(0)
+                                    ConstantValue.NULL -> ConstantExpressionValue.of(null)
+                                    else -> null
+                                }?.let { constantExpressionValue ->
+                                    LocalQuickFix.from(SimplifyExpressionFix(expr, constantExpressionValue))
+                                }
+                                val fixes = if (simplifyExpressionFixIfAvailable != null)
+                                    arrayOf(simplifyExpressionFixIfAvailable)
+                                else emptyArray()
+                                holder.registerProblem(
+                                    expr, KotlinBundle.message(key, expr.text), highlightType, *fixes
+                                )
                             }
                         }
                     }
@@ -530,19 +547,30 @@ class KotlinConstantConditionsInspection : AbstractKotlinInspection() {
             return true
         }
 
+        /**
+         * Returns true if the warning about [expression] always equal to [value] should not be displayed to the user
+         * (e.g., because it's too evident, or a well-accepted programming style).
+         * 
+         * Note that this method still returns false if the warning is legitimate but the [expression] cannot be replaced
+         * with [value] without breaking a subsequent smart-cast.
+         * 
+         * @param value value of the expression known from the analysis
+         * @param expression expression that was analyzed
+         * @return true if we should not warn about expression being equal to a specified value
+         */
         fun shouldSuppress(value: DfType, expression: KtExpression): Boolean {
             val constant = when(value) {
                 DfTypes.NULL -> ConstantValue.NULL
                 DfTypes.TRUE -> ConstantValue.TRUE
                 DfTypes.FALSE -> ConstantValue.FALSE
                 DfTypes.intValue(0), DfTypes.longValue(0) -> ConstantValue.ZERO
-                else -> ConstantValue.UNKNOWN
+                else -> return false
             }
             return analyze(expression) { shouldSuppress(constant, expression, true) }
         }
 
         context(KaSession)
-        private fun shouldSuppress(value: ConstantValue, expression: KtExpression, ignoreSmartCasts: Boolean = false): Boolean {
+        private fun shouldSuppress(value: ConstantValue, expression: KtExpression, ignoreSmartCasts: Boolean): Boolean {
             var parent = expression.parent
             if (parent is KtDotQualifiedExpression && parent.selectorExpression == expression) {
                 // Will be reported for parent qualified expression

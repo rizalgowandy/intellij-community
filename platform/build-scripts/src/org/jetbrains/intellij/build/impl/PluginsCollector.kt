@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 @file:Suppress("ReplaceGetOrSet", "ReplacePutWithAssignment", "UsePropertyAccessSyntax")
 
 package org.jetbrains.intellij.build.impl
@@ -13,7 +13,7 @@ import org.jetbrains.intellij.build.BuiltinModulesFileData
 import org.jetbrains.intellij.build.PluginBundlingRestrictions
 import java.nio.file.Path
 
-suspend fun collectCompatiblePluginsToPublish(builtinModuleData: BuiltinModulesFileData, result: MutableSet<PluginLayout>, context: BuildContext) {
+suspend fun collectCompatiblePluginsToPublish(builtinModuleData: BuiltinModulesFileData, pluginsToPublish: MutableSet<PluginLayout>, context: BuildContext) {
   val availableModulesAndPlugins = HashSet<String>(builtinModuleData.layout.size)
   builtinModuleData.layout.mapTo(availableModulesAndPlugins) { it.name }
 
@@ -24,6 +24,17 @@ suspend fun collectCompatiblePluginsToPublish(builtinModuleData: BuiltinModulesF
     honorCompatiblePluginsToIgnore = true,
     context = context,
   )
+
+  val bundledAndPublished = pluginsToPublish.filter { pluginToPublish ->
+    descriptorMapWithBundled.values.any { descriptor ->
+      descriptor.pluginLayout.mainModule == pluginToPublish.mainModule
+    }
+  }
+  check(bundledAndPublished.none()) {
+    "Plugins cannot be bundled and published for the same IDE: $bundledAndPublished\n" +
+    "Each IDE compatible with those plugins and having them unbundled should publish them on its own together with that IDE releases.\n" +
+    "Please make sure that productProperties.productLayout.pluginModulesToPublish is correctly specified."
+  }
 
   // While collecting PluginDescriptor maps above, we may have chosen incorrect PluginLayout.
   // Let's check that and substitute incorrectly chosen one with more suitable one or report error.
@@ -51,14 +62,14 @@ suspend fun collectCompatiblePluginsToPublish(builtinModuleData: BuiltinModulesF
         val substitutor = moreThanOneLayoutSubstitutors.get(layout)
         if (substitutor != null) {
           Span.current().addEvent("Substituting plugin layout $layout with Marketplace-ready $substitutor")
-          result.add(substitutor)
+          pluginsToPublish.add(substitutor)
         }
         else {
           errors.add(suspicious.first())
         }
       }
       else {
-        result.add(layout)
+        pluginsToPublish.add(layout)
       }
     }
   }
@@ -176,6 +187,12 @@ suspend fun collectPluginDescriptors(
         AttributeKey.stringKey("pluginXml"), pluginXml.toString(),
       )
       )
+      continue
+    }
+
+    if (id == "com.intellij.modules.ultimate" && !allBundledPlugins.contains(id)) {
+      // if 'ultimate' module is not mentioned in the list of bundled plugins,
+      // then this module does not exist in a form of plugin in this distribution and should be ignored
       continue
     }
 

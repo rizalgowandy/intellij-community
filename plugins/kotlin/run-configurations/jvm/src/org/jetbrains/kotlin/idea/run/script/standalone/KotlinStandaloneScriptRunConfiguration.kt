@@ -44,10 +44,6 @@ class KotlinStandaloneScriptRunConfiguration(
 ) : KotlinRunConfiguration(name, JavaRunConfigurationModule(project, true), factory), CommonJavaRunConfigurationParameters,
     RefactoringListenerProvider {
 
-    init {
-        beforeRunTasks = emptyList()
-    }
-
     /**
      * A path to the script file. Please use with caution!
      *
@@ -69,13 +65,14 @@ class KotlinStandaloneScriptRunConfiguration(
 
     override fun suggestedName() = filePath?.substringAfterLast('/')
 
+    override fun isBuildBeforeLaunchAddedByDefault(): Boolean = false
+
     override fun getConfigurationEditor(): SettingsEditor<out RunConfiguration> {
         val group = SettingsEditorGroup<KotlinStandaloneScriptRunConfiguration>()
         group.addEditor(
             ExecutionBundle.message("run.configuration.configuration.tab.title"),
             KotlinStandaloneScriptRunConfigurationEditor(project)
         )
-        JavaRunConfigurationExtensionManager.instance.appendEditors(this, group)
         return group
     }
 

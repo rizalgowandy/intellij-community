@@ -7,6 +7,7 @@ import com.intellij.ide.actions.Switcher
 import com.intellij.ide.actions.ui.JBListWithOpenInRightSplit
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.invokeAndWaitIfNeeded
+import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
@@ -48,7 +49,11 @@ abstract class RecentFilesLesson : KLesson("Recent Files and Locations", Lessons
 
     task("GotoDeclaration") {
       text(LessonsBundle.message("recent.files.first.transition", code(transitionMethodName), action(it)))
-      stateCheck { virtualFile.name.contains(transitionFileName) }
+      stateCheck {
+        val editor = FileEditorManager.getInstance(project).selectedTextEditor ?: return@stateCheck false
+        val file = FileDocumentManager.getInstance().getFile(editor.document) ?: return@stateCheck false
+        file.name.contains(transitionFileName)
+      }
       restoreIfModifiedOrMoved()
       test { actions(it) }
     }
@@ -78,18 +83,19 @@ abstract class RecentFilesLesson : KLesson("Recent Files and Locations", Lessons
       test { actions(it) }
     }
 
-    task("rfd") {
-      text(LessonsBundle.message("recent.files.search.typing", code(it)))
+    task {
+      val prefixes = "rfd"
+      text(LessonsBundle.message("recent.files.search.typing", code(prefixes)))
       triggerUI().component { ui: ExtendableTextField ->
         ui.javaClass.name.contains("SpeedSearchBase\$SearchField")
       }
-      stateCheck { checkRecentFilesSearch(it) }
+      stateCheck { checkRecentFilesSearch(prefixes) }
       restoreByUi()
       test {
         ideFrame {
           waitComponent(Switcher.SwitcherPanel::class.java)
         }
-        type(it)
+        type(prefixes)
       }
     }
 
@@ -146,16 +152,16 @@ abstract class RecentFilesLesson : KLesson("Recent Files and Locations", Lessons
       test { actions(it) }
     }
 
-    task(stringForRecentFilesSearch) {
-      text(LessonsBundle.message("recent.files.locations.search.typing", code(it)))
-      stateCheck { checkRecentLocationsSearch(it) }
+    task {
+      text(LessonsBundle.message("recent.files.locations.search.typing", code(stringForRecentFilesSearch)))
+      stateCheck { checkRecentLocationsSearch(stringForRecentFilesSearch) }
       triggerUI().component { _: SearchTextField -> true } // needed in next task to restore if search field closed
       restoreByUi()
       test {
         ideFrame {
           waitComponent(JBList::class.java)
         }
-        type(it)
+        type(stringForRecentFilesSearch)
       }
     }
 

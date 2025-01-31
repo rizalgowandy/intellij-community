@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package org.jetbrains.kotlin.idea.gradleJava.scripting
 
 import com.intellij.openapi.application.writeAction
@@ -8,6 +8,7 @@ import com.intellij.platform.backend.observation.launchTracked
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import org.jetbrains.kotlin.idea.base.plugin.KotlinPluginModeProvider
+import org.jetbrains.kotlin.idea.core.script.scriptConfigurationsSourceOfType
 import org.jetbrains.kotlin.idea.gradleJava.loadGradleDefinitions
 import org.jetbrains.kotlin.idea.gradleJava.scripting.roots.GradleBuildRootsManager
 import org.jetbrains.kotlin.idea.gradleJava.scripting.roots.Imported
@@ -84,7 +85,7 @@ class ProjectGradleSettingsListener(
             }
         }.toSet()
 
-        GradleScriptDefinitionsSource.getInstance(project)?.updateDefinitions(definitions)
-        GradleScriptDependenciesSource.getInstance(project)?.updateDependenciesAndCreateModules(gradleScripts)
+        GradleScriptDefinitionsHolder.getInstance(project).updateDefinitions(definitions)
+        project.scriptConfigurationsSourceOfType<GradleScriptConfigurationsSource>()?.updateDependenciesAndCreateModules(gradleScripts)
     }
 }

@@ -1,4 +1,4 @@
-// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2025 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.openapi.updateSettings.impl;
 
 import com.intellij.ide.AppLifecycleListener;
@@ -25,6 +25,7 @@ import com.intellij.openapi.util.text.HtmlChunk;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.platform.ide.customization.ExternalProductResourceUrls;
 import com.intellij.ui.ExperimentalUI;
+import com.intellij.util.SystemProperties;
 import com.intellij.util.Url;
 import com.intellij.util.concurrency.AppExecutorUtil;
 import com.intellij.util.text.DateFormatUtil;
@@ -45,7 +46,7 @@ import static java.lang.Math.max;
 import static java.util.concurrent.TimeUnit.*;
 
 @ApiStatus.Internal
-class UpdateCheckerService {
+public class UpdateCheckerService {
   public static UpdateCheckerService getInstance() {
     return ApplicationManager.getApplication().getService(UpdateCheckerService.class);
   }
@@ -87,7 +88,8 @@ class UpdateCheckerService {
   private void appStarted() {
     UpdateSettings settings = UpdateSettings.getInstance();
     updateDefaultChannel(settings);
-    if (settings.isCheckNeeded() || settings.isPluginsCheckNeeded()) {
+    if (settings.isCheckNeeded() || settings.isPluginsCheckNeeded() ||
+        SystemProperties.getBooleanProperty("ide.force.platform.update.check", false)) {
       scheduleFirstCheck(settings);
     }
   }
@@ -125,12 +127,13 @@ class UpdateCheckerService {
     }
   }
 
-  void scheduleFirstCheck(UpdateSettings settings) {
+  public void scheduleFirstCheck(UpdateSettings settings) {
     BuildNumber currentBuild = ApplicationInfo.getInstance().getBuild();
     BuildNumber lastBuildChecked = BuildNumber.fromString(settings.getLastBuildChecked());
     long timeSinceLastCheck = max(System.currentTimeMillis() - settings.getLastTimeChecked(), 0);
 
-    if (lastBuildChecked == null || currentBuild.compareTo(lastBuildChecked) > 0 || timeSinceLastCheck >= CHECK_INTERVAL_MS) {
+    if (lastBuildChecked == null || currentBuild.compareTo(lastBuildChecked) > 0 || timeSinceLastCheck >= CHECK_INTERVAL_MS ||
+        SystemProperties.getBooleanProperty("ide.force.platform.update.check", false)) {
       checkUpdates();
     }
     else {

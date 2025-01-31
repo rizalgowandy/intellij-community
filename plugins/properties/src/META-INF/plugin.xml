@@ -24,6 +24,12 @@
     <extensionPoint name="duplicatePropertyKeyAnnotationSuppressor"
                     interface="com.intellij.lang.properties.DuplicatePropertyKeyAnnotationSuppressor"
                     dynamic="true"/>
+    <extensionPoint name="extendedUseScopeProvider"
+                    interface="com.intellij.lang.properties.codeInspection.unused.ExtendedUseScopeProvider"
+                    dynamic="true"/>
+    <extensionPoint name="spellcheckerMnemonicsTokenizer"
+                    interface="com.intellij.lang.properties.spellchecker.MnemonicsTokenizer"
+                    dynamic="true"/>
   </extensionPoints>
 
   <extensions defaultExtensionNs="com.intellij">
@@ -57,7 +63,7 @@
 
     <enterHandlerDelegate implementation="com.intellij.lang.properties.EnterInPropertiesFileHandler" id="EnterInPropertiesFileHandler"/>
 
-    <lang.syntaxHighlighter language="Properties" implementationClass="com.intellij.lang.properties.PropertiesHighlighter"/>
+    <lang.syntaxHighlighter language="Properties" implementationClass="com.intellij.lang.properties.PropertiesHighlighterImpl"/>
     <lang.parserDefinition language="Properties" implementationClass="com.intellij.lang.properties.parsing.PropertiesParserDefinition"/>
     <automaticRenamerFactory implementation="com.intellij.lang.properties.refactoring.rename.ResourceBundleRenamerFactory"/>
     <renamePsiElementProcessor implementation="com.intellij.lang.properties.refactoring.rename.RenamePropertyProcessor"/>
@@ -153,6 +159,8 @@
     <completion.contributor language="Properties"
                             implementationClass="com.intellij.lang.properties.providers.slf4j.SimpleLoggerPropertiesCompletionContributor"/>
     <properties.implicitPropertyUsageProvider implementation="com.intellij.lang.properties.providers.slf4j.SimpleLoggerImplicitPropertiesUsageProvider"/>
+
+    <lang.floatingToolbar language="Properties" minimal="true"/>
   </extensions>
   <projectListeners>
     <listener class="com.intellij.lang.properties.Native2AsciiListener" topic="com.intellij.openapi.vfs.encoding.EncodingManagerListener"/>

@@ -60,6 +60,10 @@ public class XVariablesView extends XVariablesViewBase {
       getTree().markNodesObsolete();
     }
 
+    if (event == SessionEvent.STOPPED) {
+      mySession.clear();
+    }
+
     if (event == SessionEvent.BEFORE_RESUME) {
       return;
     }
@@ -84,14 +88,19 @@ public class XVariablesView extends XVariablesViewBase {
     super.dispose();
   }
 
-  private static void clearInlineData(XDebuggerTree tree) {
-    InlineVariablesInfo.set(getSession(tree), null);
+  @ApiStatus.Internal
+  public final @Nullable XDebugSessionImpl getSession() {
+    return mySession.get();
+  }
+
+  private void clearInlineData(XDebuggerTree tree) {
+    InlineVariablesInfo.set(getSession(), null);
     tree.updateEditor();
     clearInlays(tree);
   }
 
   protected void addEmptyMessage(XValueContainerNode<?> root) {
-    XDebugSession session = getSession(getPanel());
+    XDebugSession session = getSession();
     if (session != null) {
       if (!session.isStopped() && session.isPaused()) {
         root.setInfoMessage(XDebuggerBundle.message("message.frame.is.not.available"), null);
@@ -115,7 +124,7 @@ public class XVariablesView extends XVariablesViewBase {
   }
 
   protected void uiDataSnapshot(@NotNull DataSink sink) {
-    XDebugSessionImpl session = mySession.get();
+    XDebugSessionImpl session = getSession();
     XSourcePosition position = session == null ? null : session.getCurrentPosition();
     if (position != null) {
       sink.lazy(CommonDataKeys.VIRTUAL_FILE, () -> position.getFile());
@@ -127,8 +136,7 @@ public class XVariablesView extends XVariablesViewBase {
 
     private List<InlineDebugRenderer> myInlays = null;
 
-    @Nullable
-    public static InlineVariablesInfo get(@Nullable XDebugSession session) {
+    public static @Nullable InlineVariablesInfo get(@Nullable XDebugSession session) {
       if (session != null) {
         return DEBUG_VARIABLES.get(((XDebugSessionImpl)session).getSessionData());
       }
@@ -145,8 +153,7 @@ public class XVariablesView extends XVariablesViewBase {
       myInlays = inlays;
     }
 
-    @NotNull
-    public List<InlineDebugRenderer> getInlays() {
+    public @NotNull List<InlineDebugRenderer> getInlays() {
       return ObjectUtils.notNull(myInlays, Collections::emptyList);
     }
   }

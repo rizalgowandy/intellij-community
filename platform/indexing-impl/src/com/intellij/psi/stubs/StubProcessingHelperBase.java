@@ -1,10 +1,11 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.psi.stubs;
 
-import com.intellij.notebook.editor.BackFileViewProvider;
 import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.project.DumbService;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Computable;
+import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.PsiBinaryFile;
 import com.intellij.psi.PsiElement;
@@ -18,9 +19,11 @@ import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.psi.stubs.StubInconsistencyReporter.SourceOfCheck;
 import com.intellij.util.Processor;
 import com.intellij.util.containers.ContainerUtil;
+import com.intellij.util.indexing.FileBasedIndex;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.Unmodifiable;
 
 import java.util.Collections;
 import java.util.List;
@@ -42,11 +45,6 @@ public abstract class StubProcessingHelperBase {
                                                              @NotNull Class<Psi> requiredClass,
                                                              @NotNull Computable<String> debugOperationName) {
     PsiFile psiFile = PsiManager.getInstance(project).findFile(file);
-    //noinspection deprecation
-    if (psiFile != null && psiFile.getViewProvider() instanceof BackFileViewProvider) {
-      //noinspection deprecation
-      psiFile = ((BackFileViewProvider)psiFile.getViewProvider()).getFrontPsiFile();
-    }
 
     if (psiFile == null) {
       LOG.error("Stub index points to a file without PSI: " +
@@ -76,12 +74,16 @@ public abstract class StubProcessingHelperBase {
     return true;
   }
 
-  private static @NotNull List<StubbedSpine> getAllSpines(PsiFile psiFile) {
+  private static @Unmodifiable @NotNull List<StubbedSpine> getAllSpines(PsiFile psiFile) {
     if (!(psiFile instanceof PsiFileImpl) && psiFile instanceof PsiFileWithStubSupport) {
       return Collections.singletonList(((PsiFileWithStubSupport)psiFile).getStubbedSpine());
     }
 
-    return ContainerUtil.map(StubTreeBuilder.getStubbedRoots(psiFile.getViewProvider()), t -> ((PsiFileImpl)t.second).getStubbedSpine());
+    List<Pair<LanguageStubDescriptor, PsiFile>> roots = StubTreeBuilder.getStubbedRootDescriptors(psiFile.getViewProvider());
+    return ContainerUtil.map(roots, pair -> {
+      PsiFileImpl root = (PsiFileImpl)pair.second;
+      return root.getStubbedSpine();
+    });
   }
 
   private <Psi extends PsiElement> boolean checkType(@NotNull Class<Psi> requiredClass, PsiFile psiFile, @Nullable PsiElement psiElement,
@@ -96,7 +98,7 @@ public abstract class StubProcessingHelperBase {
                           ", requiredClass=" + requiredClass +
                           ", operation=" + debugOperationName.get() +
                           ", stubIdList=" + debugStubIdList + "@" + stubIdListIdx +
-                          ".\nref: 20240717";
+                          ".\nref: 20250127";
 
     StubTree stubTree = ((PsiFileWithStubSupport)psiFile).getStubTree();
     if (stubTree == null && psiFile instanceof PsiFileImpl) stubTree = ((PsiFileImpl)psiFile).calcStubTree();
@@ -152,7 +154,7 @@ public abstract class StubProcessingHelperBase {
                             "psiFile=" + psiFile +
                             ", psiFile.class=" + psiFile.getClass() +
                             ", requiredClass=" + requiredClass +
-                            ".\nref: 50cf572587cf";
+                            ".\nref: 20250127";
       inconsistencyDetected(objectStubTree, (PsiFileWithStubSupport)psiFile, extraMessage, WrongPsiFileClassInNonPsiStub);
       return true;
     }
@@ -168,7 +170,11 @@ public abstract class StubProcessingHelperBase {
   ) {
     try {
       StubTextInconsistencyException.checkStubTextConsistency(psiFile, SourceOfCheck.WrongTypePsiInStubHelper);
-      LOG.error(extraMessage + "\n" + StubTreeLoader.getInstance().stubTreeAndIndexDoNotMatch(stubTree, psiFile, null, source));
+      String dumbState = DumbService.isDumb(psiFile.getProject()) ?
+                         "\ndumbMode,dumbModeAccessType=" + FileBasedIndex.getInstance().getCurrentDumbModeAccessType(null) :
+                         "\nno dumbMode";
+
+      LOG.error(extraMessage + dumbState + "\n" + StubTreeLoader.getInstance().stubTreeAndIndexDoNotMatch(stubTree, psiFile, null, source));
     }
     finally {
       onInternalError(psiFile.getVirtualFile());

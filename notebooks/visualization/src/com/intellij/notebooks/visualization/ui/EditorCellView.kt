@@ -3,11 +3,15 @@ package com.intellij.notebooks.visualization.ui
 import com.intellij.ide.DataManager
 import com.intellij.ide.actions.DistractionFreeModeController
 import com.intellij.ide.ui.UISettings
-import com.intellij.notebooks.ui.visualization.*
 import com.intellij.notebooks.ui.visualization.NotebookEditorAppearanceUtils.isDiffKind
+import com.intellij.notebooks.ui.visualization.NotebookUtil.notebookAppearance
+import com.intellij.notebooks.ui.visualization.markerRenderers.NotebookCellHighlighterRenderer
+import com.intellij.notebooks.ui.visualization.markerRenderers.NotebookCodeCellBackgroundLineMarkerRenderer
 import com.intellij.notebooks.visualization.*
 import com.intellij.notebooks.visualization.NotebookCellInlayController.InputFactory
 import com.intellij.notebooks.visualization.context.NotebookDataContext
+import com.intellij.notebooks.visualization.ui.cellsDnD.DropHighlightableCellPanel
+import com.intellij.notebooks.visualization.ui.jupyterToolbars.NotebookCellActionsToolbarStateTracker
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.DataProvider
 import com.intellij.openapi.actionSystem.PlatformCoreDataKeys
@@ -19,11 +23,14 @@ import com.intellij.openapi.editor.EditorKind
 import com.intellij.openapi.editor.Inlay
 import com.intellij.openapi.editor.ex.RangeHighlighterEx
 import com.intellij.openapi.editor.impl.EditorImpl
-import com.intellij.openapi.editor.markup.*
+import com.intellij.openapi.editor.markup.HighlighterLayer
+import com.intellij.openapi.editor.markup.HighlighterTargetArea
+import com.intellij.openapi.editor.markup.RangeHighlighter
+import com.intellij.openapi.editor.markup.TextAttributes
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.registry.Registry
 import com.intellij.util.asSafely
-import java.awt.Graphics
+import java.awt.Color
 import java.awt.Rectangle
 import java.time.ZonedDateTime
 import javax.swing.JComponent
@@ -63,21 +70,30 @@ class EditorCellView(
 
   val input: EditorCellInput = createEditorCellInput()
 
-  var outputs: EditorCellOutputs? = null
+  var outputs: EditorCellOutputsView? = null
     private set
 
-  var selected = false
+  private val myEditorCellFrameManager: EditorCellFrameManager? =
+    if (interval.type == NotebookCellLines.CellType.MARKDOWN && Registry.`is`("jupyter.markdown.cells.border")) {
+      EditorCellFrameManager(editor, this, NotebookCellLines.CellType.MARKDOWN)
+    } else if (interval.type == NotebookCellLines.CellType.CODE && Registry.`is`("jupyter.code.cells.border")) {
+      EditorCellFrameManager(editor, this, NotebookCellLines.CellType.CODE)
+    } else null
+
+  var selected: Boolean = false
     set(value) {
       field = value
       updateFolding()
       updateRunButtonVisibility()
       updateCellHighlight()
+      updateCellActionsToolbarVisibility()
+      myEditorCellFrameManager?.updateCellFrameShow(mouseOver || value)
     }
 
   private var mouseOver = false
 
-  // We are storing last offsets for highlighters to prevent highlighters unnecessary recreation on same values.
-  private var lastHighLightersOffsets: IntRange? = null
+  // We are storing last lines range for highlighters to prevent highlighters unnecessary recreation on the same lines.
+  private var lastHighLightersLines: IntRange? = null
 
   var disableActions: Boolean = false
     set(value) {
@@ -99,6 +115,12 @@ class EditorCellView(
     }
     val executionStatus = cell.executionStatus.get()
     updateExecutionStatus(executionStatus.count, executionStatus.status, executionStatus.startTime, executionStatus.endTime)
+    editor.notebookAppearance.codeCellBackgroundColor.afterChange(this) { backgroundColor ->
+      updateCellHighlight(force = true)
+    }
+    editor.notebook?.readOnly?.afterChange(this) {
+      updateRunButtonVisibility()
+    }
     recreateControllers()
     updateSelection(false)
     updateOutputs()
@@ -115,6 +137,7 @@ class EditorCellView(
     _controllers.forEach { controller ->
       disposeController(controller)
     }
+    myEditorCellFrameManager?.let { Disposer.dispose(it) }
     removeCellHighlight()
   }
 
@@ -143,22 +166,25 @@ class EditorCellView(
         DataManager.removeDataProvider(component)
         DataManager.registerDataProvider(component, NotebookCellDataProvider(editor, component) { interval })
       }
+      controller.createGutterRendererLineMarker(editor, interval, cellView = this)
     }
-    updateCellHighlight()
   }
 
-  private fun recreateControllers() {
-    val otherFactories = NotebookCellInlayController.Factory.EP_NAME.extensionList
-      .filter { it !is InputFactory }
-    val controllersToDispose = _controllers.toMutableSet()
-    _controllers = if (!editor.isDisposed) {
-      otherFactories.mapNotNull { factory -> failSafeCompute(factory, editor, _controllers, intervals.intervals.listIterator(interval.ordinal)) }
+  private fun recreateControllers() = editor.updateManager.update { updateContext ->
+    updateContext.addInlayOperation {
+      val otherFactories = NotebookCellInlayController.Factory.EP_NAME.extensionList
+        .filter { it !is InputFactory }
+      val controllersToDispose = _controllers.toMutableSet()
+      _controllers = if (!editor.isDisposed) {
+        otherFactories.mapNotNull { factory -> failSafeCompute(factory, editor, _controllers, intervals.intervals.listIterator(interval.ordinal)) }
+      }
+      else {
+        emptyList()
+      }
+      controllersToDispose.removeAll(_controllers.toSet())
+      controllersToDispose.forEach { disposeController(it) }
+      updateControllers()
     }
-    else {
-      emptyList()
-    }
-    controllersToDispose.removeAll(_controllers.toSet())
-    controllersToDispose.forEach { disposeController(it) }
   }
 
   private fun updateInput() = runInEdt {
@@ -175,8 +201,8 @@ class EditorCellView(
 
   private fun isInlaysBroken(): Boolean {
     val inlaysOffsets = buildSet {
-        add(editor.document.getLineStartOffset(interval.lines.first))
-        add(editor.document.getLineEndOffset(interval.lines.last))
+      add(editor.document.getLineStartOffset(interval.lines.first))
+      add(editor.document.getLineEndOffset(interval.lines.last))
     }
     for (inlay in getInlays()) {
       if (!inlay.isValid || inlay.offset !in inlaysOffsets) {
@@ -189,7 +215,7 @@ class EditorCellView(
   private fun updateOutputs() = runInEdt {
     if (hasOutputs()) {
       if (outputs == null) {
-        outputs = EditorCellOutputs(editor, cell).also {
+        outputs = EditorCellOutputsView(editor, cell).also {
           add(it)
         }
         updateCellHighlight()
@@ -244,12 +270,16 @@ class EditorCellView(
     mouseOver = false
     updateFolding()
     updateRunButtonVisibility()
+    myEditorCellFrameManager?.updateCellFrameShow(mouseOver || selected)
+    updateCellActionsToolbarVisibility()
   }
 
   fun mouseEntered() {
     mouseOver = true
     updateFolding()
     updateRunButtonVisibility()
+    myEditorCellFrameManager?.updateCellFrameShow(mouseOver || selected)
+    updateCellActionsToolbarVisibility()
   }
 
   inline fun <reified T : Any> getExtension(): T? {
@@ -273,21 +303,20 @@ class EditorCellView(
     cellHighlighters.clear()
   }
 
-  private fun updateCellHighlight() {
+  private fun updateCellHighlight(force: Boolean = false) {
     val interval = intervalPointer.get() ?: error("Invalid interval")
 
     val startOffset = editor.document.getLineStartOffset(interval.lines.first)
     val endOffset = editor.document.getLineEndOffset(interval.lines.last)
 
-    val range = IntRange(startOffset, endOffset)
-    if (interval.lines == lastHighLightersOffsets) {
+    if (!force && interval.lines == lastHighLightersLines) {
       return
     }
-    lastHighLightersOffsets = range
+    lastHighLightersLines = IntRange(interval.lines.first, interval.lines.last)
 
     removeCellHighlight()
 
-    // manages the cell background + clips background on the right below the scroll bar
+    // manages the cell background and clips background on the right below the scroll bar
     if (interval.type == NotebookCellLines.CellType.CODE && !editor.isDiffKind()) {
       addCellHighlighter {
         editor.markupModel.addRangeHighlighter(
@@ -296,11 +325,11 @@ class EditorCellView(
           // Code cell background should be seen behind any syntax highlighting, selection or any other effect.
           HighlighterLayer.FIRST - 100,
           TextAttributes().apply {
-            backgroundColor = editor.notebookAppearance.getCodeCellBackground(editor.colorsScheme)
+            backgroundColor = editor.notebookAppearance.codeCellBackgroundColor.get()
           },
           HighlighterTargetArea.LINES_IN_RANGE
         ).apply {
-          customRenderer = NotebookCellHighlighterRenderer
+          setCustomRenderer(NotebookCellHighlighterRenderer)
         }
       }
     }
@@ -309,13 +338,7 @@ class EditorCellView(
     if (interval.type == NotebookCellLines.CellType.CODE) {
       addCellHighlighter {
         editor.markupModel.addRangeHighlighterAndChangeAttributes(null, startOffset, endOffset, HighlighterLayer.FIRST - 100, HighlighterTargetArea.LINES_IN_RANGE, false) { o: RangeHighlighterEx ->
-          o.lineMarkerRenderer = NotebookCodeCellBackgroundLineMarkerRenderer(o)
-        }
-      }
-    } else if (editor.editorKind != EditorKind.DIFF) {
-      addCellHighlighter {
-        editor.markupModel.addRangeHighlighterAndChangeAttributes(null, startOffset, endOffset, HighlighterLayer.FIRST - 100, HighlighterTargetArea.LINES_IN_RANGE, false) { o: RangeHighlighterEx ->
-          o.lineMarkerRenderer = NotebookTextCellBackgroundLineMarkerRenderer(o)
+          o.lineMarkerRenderer = NotebookCodeCellBackgroundLineMarkerRenderer(o, { input.component.calculateBounds().let { it.y to it.height } })
         }
       }
     }
@@ -323,7 +346,7 @@ class EditorCellView(
     if (uiSettings.presentationMode || DistractionFreeModeController.isDistractionFreeModeEnabled()) {  // See PY-74597
       addCellHighlighter {
         editor.markupModel.addRangeHighlighterAndChangeAttributes(null, startOffset, endOffset, HighlighterLayer.FIRST - 100, HighlighterTargetArea.LINES_IN_RANGE, false) { o: RangeHighlighterEx ->
-          o.lineMarkerRenderer = NotebookCodeCellBackgroundLineMarkerRenderer(o, presentationModeMasking = true)
+          o.lineMarkerRenderer = NotebookCodeCellBackgroundLineMarkerRenderer(o, { input.component.calculateBounds().let { it.y to it.height } }, presentationModeMasking = true)
         }
       }
     }
@@ -336,8 +359,8 @@ class EditorCellView(
   fun updateSelection(value: Boolean) {
     selected = value
     updateFolding()
-    updateRunButtonVisibility()
     updateCellHighlight()
+    myEditorCellFrameManager?.updateCellFrameShow(mouseOver || selected)
   }
 
   private fun updateFolding() {
@@ -348,7 +371,29 @@ class EditorCellView(
   }
 
   private fun updateRunButtonVisibility() {
-    input.runCellButton?.visible = !disableActions && (mouseOver || selected)
+    input.runCellButton ?: return
+    val isReadOnlyNotebook = editor.notebook?.readOnly?.get() ?: false
+    val shouldBeVisible = !isReadOnlyNotebook && !disableActions && (mouseOver || selected)
+    if (input.runCellButton.lastRunButtonVisibility == shouldBeVisible) return
+
+    input.runCellButton.visible = shouldBeVisible
+    input.runCellButton.lastRunButtonVisibility = shouldBeVisible
+  }
+
+  private fun updateCellActionsToolbarVisibility() {
+    val toolbarManager = input.cellActionsToolbar ?: return
+    val targetComponent = _controllers.filterIsInstance<DataProviderComponent>().firstOrNull()?.retrieveDataProvider() ?: return
+    val tracker = NotebookCellActionsToolbarStateTracker.get(editor) ?: return
+    when {
+      mouseOver -> toolbarManager.showToolbar(targetComponent)
+      selected -> {
+        // we show the toolbar only for the last selected cell
+        if (tracker.lastSelectedCell == input) return
+        tracker.updateLastSelectedCell(input)
+        toolbarManager.showToolbar(targetComponent)
+      }
+      else -> toolbarManager.hideToolbar()
+    }
   }
 
   override fun calculateBounds(): Rectangle {
@@ -361,11 +406,21 @@ class EditorCellView(
     return Rectangle(0, inputBounds.y, editor.contentSize.width, height)
   }
 
+  fun updateFrameVisibility(selected: Boolean, color: Color): Unit = _controllers.forEach {
+    it.updateFrameVisibility(selected, interval, color)
+  }
+
   private fun updateExecutionStatus(executionCount: Int?, progressStatus: ProgressStatus?, startTime: ZonedDateTime?, endTime: ZonedDateTime?) {
     _controllers.filterIsInstance<CellExecutionStatusView>().firstOrNull()
       ?.updateExecutionStatus(executionCount, progressStatus, startTime, endTime)
     input.runCellButton?.updateGutterAction(progressStatus)
   }
+
+  fun addDropHighlightIfApplicable(): Unit? =
+    _controllers.filterIsInstance<DropHighlightableCellPanel>().firstOrNull()?.addDropHighlight()
+
+  fun removeDropHighlightIfPresent(): Unit? =
+    _controllers.filterIsInstance<DropHighlightableCellPanel>().firstOrNull()?.removeDropHighlight()
 
   internal data class NotebookCellDataProvider(
     val editor: Editor,
@@ -387,33 +442,5 @@ class EditorCellView(
 
   fun requestCaret() {
     input.requestCaret()
-  }
-}
-
-/**
- * Renders rectangle in the right part of the editor to make filled code cells look like rectangles with margins.
- * But mostly it's used as a token to filter notebook cell highlighters.
- */
-@Suppress("DuplicatedCode")
-private object NotebookCellHighlighterRenderer : CustomHighlighterRenderer {
-  override fun paint(editor: Editor, highlighter: RangeHighlighter, graphics: Graphics) {
-    editor as EditorImpl
-    graphics.create().use { g ->
-      val scrollbarWidth = editor.scrollPane.verticalScrollBar.width
-      val oldBounds = g.clipBounds
-      val visibleArea = editor.scrollingModel.visibleArea
-      g.setClip(
-        visibleArea.x + visibleArea.width - scrollbarWidth,
-        oldBounds.y,
-        scrollbarWidth,
-        oldBounds.height
-      )
-
-      g.color = editor.colorsScheme.defaultBackground
-      g.clipBounds.run {
-        val fillX = if (editor.editorKind == EditorKind.DIFF && editor.isMirrored) x + 20 else x
-        g.fillRect(fillX, y, width, height)
-      }
-    }
   }
 }

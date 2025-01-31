@@ -45,7 +45,7 @@ internal object KotlinChangeSignatureUsageSearcher {
                         ) {
                             result.add(KotlinDataClassComponentUsage(element, "component${i + 1}"))
                         } else if ((element is KtSimpleNameExpression || element is KDocName) && element.parent !is KtValueArgumentName) {
-                            result.add(KotlinParameterUsage(element as KtElement, parameterInfo))
+                            result.add(KotlinParameterUsage(element, parameterInfo))
                         }
                     }
                 }
@@ -83,7 +83,7 @@ internal object KotlinChangeSignatureUsageSearcher {
                         //deleted or changed receiver, must be preserved as simple parameter
                         val parentExpression = expression.parent
                         if (parentExpression is KtThisExpression && parentExpression.parent !is KtDotQualifiedExpression &&
-                            parentExpression.expressionType?.let { originalReceiverType.semanticallyEquals(it) } == true) {
+                            parentExpression.expressionType?.isSubtypeOf(originalReceiverType) == true) {
                             result.add(
                                 KotlinParameterUsage(parentExpression, originalReceiverInfo!!)
                             )

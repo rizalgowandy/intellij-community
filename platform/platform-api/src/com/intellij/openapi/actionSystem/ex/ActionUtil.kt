@@ -27,7 +27,6 @@ import com.intellij.openapi.util.NlsActions.ActionText
 import com.intellij.openapi.util.registry.Registry
 import com.intellij.openapi.util.text.StringUtil
 import com.intellij.ui.ClientProperty
-import com.intellij.ui.CommonActionsPanel
 import com.intellij.util.ObjectUtils
 import com.intellij.util.SlowOperationCanceledException
 import com.intellij.util.SlowOperations
@@ -43,7 +42,6 @@ import javax.swing.Action
 import javax.swing.Icon
 import javax.swing.JComponent
 import javax.swing.KeyStroke
-import kotlin.Throws
 
 private val LOG = logger<ActionUtil>()
 private val InputEventDummyAction = EmptyAction.createEmptyAction(null, null, true)
@@ -140,7 +138,7 @@ object ActionUtil {
     vararg events: AnActionEvent,
   ) {
     val actionNames = events.asSequence()
-      .map { it.presentation.text }.filter { it.isNotEmpty() }.toList()
+      .mapNotNull { it.presentation.text }.filter { it.isNotEmpty() }.toList()
     if (LOG.isDebugEnabled) {
       LOG.debug("Showing dumb mode warning for ${events.asList()}", Throwable())
     }
@@ -358,16 +356,11 @@ object ActionUtil {
         e.presentation.text, action, dataContext,
         JBPopupFactory.ActionSelectionAid.SPEEDSEARCH,
         false, null, -1, null, place)
-      val toolbarPopupLocation = CommonActionsPanel.getPreferredPopupPoint(
-        action, dataContext.getData(PlatformCoreDataKeys.CONTEXT_COMPONENT))
-      if (toolbarPopupLocation != null) {
-        popup.show(toolbarPopupLocation)
-      }
-      else if (popupShow != null) {
+      if (popupShow != null) {
         popupShow.accept(popup)
       }
       else {
-        popup.showInBestPositionFor(dataContext)
+        popup.show(JBPopupFactory.getInstance().guessBestPopupLocation(action, e))
       }
     }
     else {
